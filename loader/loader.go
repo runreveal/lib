@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/segmentio/encoding/json"
-
 	"github.com/tailscale/hujson"
 	"github.com/tidwall/gjson"
 )
