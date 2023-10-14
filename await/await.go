@@ -19,6 +19,7 @@ type RunFunc func(context.Context) error
 
 type runner struct {
 	funcs       []RunFunc
+	funcNames   []string
 	withSignals bool
 	startMu     sync.Mutex
 	started     bool
@@ -42,6 +43,17 @@ func (r *runner) Add(f RunFunc) {
 		panic("Add called after Run started")
 	}
 	r.funcs = append(r.funcs, f)
+	r.funcNames = append(r.funcNames, "")
+	r.startMu.Unlock()
+}
+
+func (r *runner) AddNamed(f RunFunc, name string) {
+	r.startMu.Lock()
+	if r.started {
+		panic("Add called after Run started")
+	}
+	r.funcs = append(r.funcs, f)
+	r.funcNames = append(r.funcNames, name)
 	r.startMu.Unlock()
 }
 
@@ -70,14 +82,18 @@ func (r *runner) Run(ctx context.Context) error {
 		cncl()
 	}()
 
-	for _, f := range r.funcs {
+	for i, f := range r.funcs {
 		atomic.AddInt32(&waitCount, 1)
-		go func(fn func(context.Context) error) {
+		go func(fn func(context.Context) error, idx int) {
 			err := fn(ctx)
-			slog.Debug(fmt.Sprintf("subroutine error: %+v", err))
+			if r.funcNames[idx] != "" {
+				slog.Debug(fmt.Sprintf("subroutine %s returned: %+v", r.funcNames[idx], err))
+			} else {
+				slog.Debug(fmt.Sprintf("subroutine error: %+v", err))
+			}
 			errc <- err
 			atomic.AddInt32(&waitCount, -1)
-		}(f)
+		}(f, i)
 	}
 
 	var err error
@@ -97,6 +113,7 @@ func (r *runner) Run(ctx context.Context) error {
 		slog.Error("stopping on signal", "signal", sig)
 	case <-ctx.Done():
 		err = ctx.Err()
+		slog.Error("stopping on context done", "err", err)
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -106,6 +123,8 @@ func (r *runner) Run(ctx context.Context) error {
 	return err
 }
 
+// waitTimeout will return either when the context is canceled or when the
+// counter reaches 0. It will check the counter every 10ms.
 func waitTimeout(ctx context.Context, counter *int32) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	for {
@@ -120,6 +139,8 @@ func waitTimeout(ctx context.Context, counter *int32) {
 	}
 }
 
+// ListenAndServe provides a graceful shutdown for an http.Server.
+// usage: `w.Add(await.ListenAndServe(srv))` followed by the normal w.Run(ctx)
 func ListenAndServe(server *http.Server) func(context.Context) error {
 	return func(ctx context.Context) error {
 		errc := make(chan error, 1)
