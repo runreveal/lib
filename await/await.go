@@ -15,7 +15,15 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+type Runner interface {
+	Run(context.Context) error
+}
+
 type RunFunc func(context.Context) error
+
+func (rf RunFunc) Run(ctx context.Context) error {
+	return rf(ctx)
+}
 
 type runner struct {
 	funcs       []RunFunc
@@ -37,22 +45,22 @@ func New(...Option) *runner {
 	}
 }
 
-func (r *runner) Add(f RunFunc) {
+func (r *runner) Add(f Runner) {
 	r.startMu.Lock()
 	if r.started {
 		panic("Add called after Run started")
 	}
-	r.funcs = append(r.funcs, f)
+	r.funcs = append(r.funcs, f.Run)
 	r.funcNames = append(r.funcNames, "")
 	r.startMu.Unlock()
 }
 
-func (r *runner) AddNamed(f RunFunc, name string) {
+func (r *runner) AddNamed(f Runner, name string) {
 	r.startMu.Lock()
 	if r.started {
 		panic("Add called after Run started")
 	}
-	r.funcs = append(r.funcs, f)
+	r.funcs = append(r.funcs, f.Run)
 	r.funcNames = append(r.funcNames, name)
 	r.startMu.Unlock()
 }
