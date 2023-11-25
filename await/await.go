@@ -31,12 +31,19 @@ type runner struct {
 	withSignals bool
 	startMu     sync.Mutex
 	started     bool
+	stopTimeout time.Duration
 }
 
 type Option func(*runner)
 
 func WithSignals(r *runner) {
 	r.withSignals = true
+}
+
+func WithStopTimeout(d time.Duration) Option {
+	return func(r *runner) {
+		r.stopTimeout = d
+	}
 }
 
 func New(...Option) *runner {
@@ -78,26 +85,24 @@ func (r *runner) Run(ctx context.Context) error {
 	r.started = true
 	r.startMu.Unlock()
 
+	if r.stopTimeout <= 0 {
+		r.stopTimeout = 10 * time.Second
+	}
+
 	errc := make(chan error, len(r.funcs))
-	ctx, cancel := context.WithCancel(ctx)
+	// this cancel func cancels all subroutines
+	ctx, cancel := context.WithCancelCause(ctx)
 
 	var waitCount int32
-
-	defer func() {
-		cancel()
-		cc, cncl := context.WithTimeout(context.Background(), 10*time.Second)
-		waitTimeout(cc, &waitCount)
-		cncl()
-	}()
 
 	for i, f := range r.funcs {
 		atomic.AddInt32(&waitCount, 1)
 		go func(fn func(context.Context) error, idx int) {
 			err := fn(ctx)
 			if r.funcNames[idx] != "" {
-				slog.Debug(fmt.Sprintf("subroutine %s returned: %+v", r.funcNames[idx], err))
+				slog.Info(fmt.Sprintf("subroutine %s returned: %+v", r.funcNames[idx], err))
 			} else {
-				slog.Debug(fmt.Sprintf("subroutine error: %+v", err))
+				slog.Info(fmt.Sprintf("subroutine error: %+v", err))
 			}
 			errc <- err
 			atomic.AddInt32(&waitCount, -1)
@@ -122,10 +127,16 @@ func (r *runner) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		err = ctx.Err()
 		slog.Error("stopping on context done", "err", err)
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
 	case err = <-errc:
+		slog.Info("await: stopping on error returned", "err", err)
+	}
+
+	cancel(fmt.Errorf("await: %w", err))
+
+	waitOrTimeout(r.stopTimeout, &waitCount)
+
+	if errors.Is(err, context.Canceled) {
+		return nil
 	}
 
 	return err
@@ -133,12 +144,12 @@ func (r *runner) Run(ctx context.Context) error {
 
 // waitTimeout will return either when the context is canceled or when the
 // counter reaches 0. It will check the counter every 10ms.
-func waitTimeout(ctx context.Context, counter *int32) {
+func waitOrTimeout(timeout time.Duration, counter *int32) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	for {
 		select {
-		case <-ctx.Done():
-			return
+		case <-time.After(timeout):
+			slog.Error("await: timed out waiting for subroutines to finish")
 		case <-ticker.C:
 			if atomic.LoadInt32(counter) == 0 {
 				return
@@ -149,8 +160,8 @@ func waitTimeout(ctx context.Context, counter *int32) {
 
 // ListenAndServe provides a graceful shutdown for an http.Server.
 // usage: `w.Add(await.ListenAndServe(srv))` followed by the normal w.Run(ctx)
-func ListenAndServe(server *http.Server) func(context.Context) error {
-	return func(ctx context.Context) error {
+func ListenAndServe(server *http.Server) Runner {
+	return RunFunc(func(ctx context.Context) error {
 		errc := make(chan error, 1)
 		go func() {
 			errc <- server.ListenAndServe()
@@ -168,5 +179,5 @@ func ListenAndServe(server *http.Server) func(context.Context) error {
 		case err := <-errc:
 			return err
 		}
-	}
+	})
 }
