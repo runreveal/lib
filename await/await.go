@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type Runner interface {

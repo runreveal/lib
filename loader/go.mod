@@ -1,6 +1,6 @@
 module github.com/runreveal/lib/loader
 
-go 1.20
+go 1.21
 
 require (
 	github.com/segmentio/encoding v0.3.6
