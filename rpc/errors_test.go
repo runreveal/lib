@@ -24,16 +24,7 @@ func (e errA) Error() string {
 }
 
 func (e errA) As(target any) bool {
-	fmt.Println("in A as")
-	if target, ok := target.(*errProxy); ok {
-		mytyp := reflect.TypeOf(e)
-		tgttyp := reflect.TypeOf(target.ce)
-		fmt.Println("A typ", mytyp)
-		fmt.Println("A tgt", tgttyp)
-		target.ce = e
-		return true
-	}
-	return false
+	return IsMine(e, target)
 }
 
 func (e errA) Unwrap() error {
@@ -64,15 +55,7 @@ func (e errB) Error() string {
 }
 
 func (e errB) As(target any) bool {
-	if target, ok := target.(*errProxy); ok {
-		mytyp := reflect.TypeOf(e)
-		tgttyp := reflect.TypeOf(target.ce)
-		fmt.Println("b typ", mytyp)
-		fmt.Println("b tgt", tgttyp)
-		target.ce = e
-		return true
-	}
-	return false
+	return IsMine(e, target)
 }
 
 func (e errB) Unwrap() error {
@@ -105,6 +88,20 @@ func (e errProxy) As(target any) bool {
 
 func (e errProxy) Error() string {
 	return e.ce.Error()
+}
+
+func IsMine(e CustomError, target any) bool {
+	if target, ok := target.(*errProxy); ok {
+		mytyp := reflect.TypeOf(e)
+		tgttyp := reflect.TypeOf(target.ce)
+		fmt.Println("typ", mytyp)
+		fmt.Println("tgt", tgttyp)
+		if mytyp == tgttyp {
+			target.ce = e
+			return true
+		}
+	}
+	return false
 }
 
 func TestErrors(t *testing.T) {
