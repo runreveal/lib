@@ -42,7 +42,8 @@ type Registry[T any] struct {
 }
 
 var registry = struct {
-	// map[type]registry[T] where T is variadic
+	// map[typeString]registry[T] where T is variadic and typeString is:
+	// reflect.TypeOf(T).String()
 	m map[string]any
 	sync.RWMutex
 }{
