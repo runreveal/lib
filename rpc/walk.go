@@ -13,10 +13,14 @@ func Walk(r *mux.Router) {
 		if err != nil {
 			fmt.Println("Path template err:", err)
 		}
-		pathRegexp, err := route.GetPathRegexp()
-		if err != nil {
-			fmt.Println("Path regexp err:", err)
+		routeName := route.GetName()
+		if routeName == "" {
+			routeName = "<noname>"
 		}
+		// pathRegexp, err := route.GetPathRegexp()
+		// if err != nil {
+		// 	fmt.Println("Path regexp err:", err)
+		// }
 		methods, err := route.GetMethods()
 		if err != nil {
 			if strings.Contains(err.Error(), "doesn't have methods") {
@@ -27,7 +31,7 @@ func Walk(r *mux.Router) {
 		}
 		handler := route.GetHandler()
 		for _, method := range methods {
-			fmt.Printf("%s %s %s %s\n", method, pathTemplate, pathRegexp, handler)
+			fmt.Printf("%s %s `%s` %s\n", method, pathTemplate, routeName, handler)
 		}
 		return nil
 	})
