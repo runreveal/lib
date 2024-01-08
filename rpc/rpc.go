@@ -29,7 +29,6 @@ func RPC[Rq, Rp any](
 	callme func(ctx context.Context, rq Rq) (rp Rp, err error),
 	opts ...RPCOption,
 ) http.Handler {
-
 	var (
 		req  Rq
 		resp Rp
@@ -88,6 +87,8 @@ func RPC[Rq, Rp any](
 
 	return c
 }
+
+type Empty struct{}
 
 type RPCResponse struct {
 	Success bool   `json:"success"`
@@ -152,6 +153,8 @@ func joinWithCommas(slice []string) string {
 
 func structToTypeDef(s interface{}) string {
 	val := reflect.ValueOf(s)
+	fmt.Println(val.Kind())
+	fmt.Println(reflect.TypeOf(s))
 	if val.Kind() != reflect.Struct {
 		panic("not a struct")
 	}

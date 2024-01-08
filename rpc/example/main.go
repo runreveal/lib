@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"os"
 
 	"github.com/gorilla/mux"
 	"github.com/runreveal/lib/await"
@@ -23,7 +24,7 @@ func main() {
 		Handler: router,
 	}
 
-	rpc.Walk(router)
+	rpc.PrintRoutes(router, os.Stdout)
 
 	w := await.New(await.WithSignals)
 	w.Add(await.ListenAndServe(s))
