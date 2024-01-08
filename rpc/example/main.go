@@ -14,8 +14,8 @@ import (
 
 func main() {
 	router := mux.NewRouter()
-	router.Handle("/echo/{id}", rpc.RPC(svc.Echo)).Methods("GET")
-	router.Handle("/echo/create", rpc.RPC(svc.EchoCreate)).Methods("POST")
+	router.Handle("/echo/{id}", rpc.RPC(svc.Echo)).Methods("GET").Name("echo#getByID")
+	router.Handle("/echo/create", rpc.RPC(svc.EchoCreate)).Methods("POST").Name("echo#create")
 	router.Handle("/echo2", rpc.RPC(sub.Echo))
 
 	s := &http.Server{
