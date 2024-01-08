@@ -2,16 +2,17 @@ package rpc
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/gorilla/mux"
 )
 
-func Walk(r *mux.Router) {
+func PrintRoutes(r *mux.Router, w io.Writer) {
 	err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err := route.GetPathTemplate()
 		if err != nil {
-			fmt.Println("Path template err:", err)
+			fmt.Fprintln(w, "Path template err:", err)
 		}
 		routeName := route.GetName()
 		if routeName == "" {
@@ -19,23 +20,27 @@ func Walk(r *mux.Router) {
 		}
 		// pathRegexp, err := route.GetPathRegexp()
 		// if err != nil {
-		// 	fmt.Println("Path regexp err:", err)
+		// 	fmt.Fprintln("Path regexp err:", err)
 		// }
+
 		methods, err := route.GetMethods()
 		if err != nil {
 			if strings.Contains(err.Error(), "doesn't have methods") {
 				methods = []string{"ANY"}
 			} else {
-				fmt.Println("Methods err:", err)
+				fmt.Fprintln(w, "Methods err:", err)
 			}
 		}
 		handler := route.GetHandler()
 		for _, method := range methods {
-			fmt.Printf("%s %s `%s` %s\n", method, pathTemplate, routeName, handler)
+			if method == "OPTIONS" {
+				continue
+			}
+			fmt.Fprintf(w, "%s %s `%s` %s\n", method, pathTemplate, routeName, handler)
 		}
 		return nil
 	})
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(w, err)
 	}
 }
