@@ -151,22 +151,41 @@ func joinWithCommas(slice []string) string {
 	return returnString
 }
 
-func structToTypeDef(s interface{}) string {
-	val := reflect.ValueOf(s)
-	fmt.Println(val.Kind())
-	fmt.Println(reflect.TypeOf(s))
-	if val.Kind() != reflect.Struct {
-		panic("not a struct")
+func structToTypeDef(s any) string {
+	typ := reflect.TypeOf(s)
+
+	switch typ.Kind() {
+	case reflect.Struct:
+		var fields []string
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			fields = append(fields, field.Name+" "+field.Type.String())
+		}
+		typeName := typ.Name()
+		if typeName == "" {
+			typeName = "struct"
+		}
+		return typeName + " {" + strings.Join(fields, "; ") + "}"
+
+	default:
+		return typ.String() // For basic types, just return the type name
 	}
 
-	var fields []string
-	typ := val.Type()
-	for i := 0; i < val.NumField(); i++ {
-		field := typ.Field(i)
-		fields = append(fields, field.Name+" "+field.Type.String())
-	}
+	// val := reflect.ValueOf(s)
+	// fmt.Println(val.Kind())
+	// fmt.Println(reflect.TypeOf(s))
+	// if val.Kind() != reflect.Struct {
+	// 	panic("not a struct")
+	// }
 
-	return fmt.Sprintf("%T {", s) + strings.Join(fields, "; ") + "}"
+	// var fields []string
+	// typ := val.Type()
+	// for i := 0; i < val.NumField(); i++ {
+	// 	field := typ.Field(i)
+	// 	fields = append(fields, field.Name+" "+field.Type.String())
+	// }
+
+	// return fmt.Sprintf("%T {", s) + strings.Join(fields, "; ") + "}"
 }
 
 // func upgradeContext(w http.ResponseWriter, r *http.Request) context.Context {
