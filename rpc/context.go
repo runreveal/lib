@@ -14,8 +14,8 @@ var (
 	respContextKey = contextKey{name: "responseKey"}
 )
 
-func Request(ctx context.Context) http.Request {
-	v, ok := ctx.Value(reqContextKey).(http.Request)
+func Request(ctx context.Context) *http.Request {
+	v, ok := ctx.Value(reqContextKey).(*http.Request)
 	if !ok {
 		panic("request not set on context. ensure handler is wrapped")
 	}
