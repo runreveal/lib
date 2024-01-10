@@ -13,9 +13,33 @@ import (
 type call struct {
 	stringFunc func() string
 	handler    http.HandlerFunc
+
+	// I have no idea how authz and audit hooks should look.
+	// We don't have user info in the rpc package context.
+	//     I don't think we should assume anything about how an application
+	//     models it's users.
+	// They probably want the http request which they can get from the context.
+	// I think it is good to pass in the deserialized object.
+	// Debating if we should get and pass the route name to the hook, but that's
+	// on the request too.  Doing so would tightly couple us to a router
+	// implementation.
+	authzHook func(ctx context.Context, reqObj any) error
+	auditHook func(ctx context.Context, reqObj any) error
 }
 
 type RPCOption func(*call)
+
+func WithAuthzHook(hook func(ctx context.Context, reqObj any) error) RPCOption {
+	return func(c *call) {
+		c.authzHook = hook
+	}
+}
+
+func WithAuditHook(hook func(ctx context.Context, reqObj any) error) RPCOption {
+	return func(c *call) {
+		c.auditHook = hook
+	}
+}
 
 func (c call) String() string {
 	return c.stringFunc()
@@ -48,14 +72,16 @@ func RPC[Rq, Rp any](
 	}
 
 	c.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
 		// Upgrade the context
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, reqContextKey, r)
+
+		// Upgrade the responseWriter so we can know if the application has already
+		// sent a response
 		rw := &responseWrapper{wrapped: w}
 		ctx = context.WithValue(ctx, respContextKey, rw)
 
-		// deserialize request
+		// Deserialize request
 		var rq Rq
 		err := json.NewDecoder(r.Body).Decode(&rq)
 		if err != nil {
@@ -63,24 +89,50 @@ func RPC[Rq, Rp any](
 			return
 		}
 
-		if v, ok := any(rq).(interface{ Validate() error }); ok {
+		// Do Validation
+		switch v := any(rq).(type) {
+		case interface{ Validate(context.Context) error }:
+			if err := v.Validate(ctx); err != nil {
+				handleErr(ctx, rw, err)
+				return
+			}
+		case interface{ Validate() error }:
 			if err := v.Validate(); err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
 		}
 
-		resp, err := callme(ctx, rq)
+		// Authorization hook
+		if c.authzHook != nil {
+			if err := c.authzHook(ctx, rq); err != nil {
+				handleErr(ctx, rw, err)
+				return
+			}
+		}
 
+		// Audit logging hook
+		if c.auditHook != nil {
+			if err := c.auditHook(ctx, rq); err != nil {
+				handleErr(ctx, rw, err)
+				return
+			}
+		}
+
+		// Call the procedure
+		resp, err := callme(ctx, rq)
 		if err != nil {
 			handleErr(ctx, rw, err)
 			return
 		}
 
+		// Check if the response was already sent (application hijacked response)
+		// not sure if this needs to be guarded w/ a mutex
 		if rw.status != 0 {
 			slog.Warn("response sent in wrapped rpc call")
 			return
 		}
+
 		// serialize response
 		success(rw, resp)
 	})
