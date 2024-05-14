@@ -46,10 +46,14 @@ func WithStopTimeout(d time.Duration) Option {
 	}
 }
 
-func New(...Option) *runner {
-	return &runner{
+func New(opts ...Option) *runner {
+	r := &runner{
 		funcs: make([]RunFunc, 0),
 	}
+	for _, opt := range opts {
+		opt(r)
+	}
+	return r
 }
 
 func (r *runner) Add(f Runner) {
@@ -99,10 +103,12 @@ func (r *runner) Run(ctx context.Context) error {
 		atomic.AddInt32(&waitCount, 1)
 		go func(fn func(context.Context) error, idx int) {
 			err := fn(ctx)
-			if r.funcNames[idx] != "" {
-				slog.Info(fmt.Sprintf("subroutine %s returned: %+v", r.funcNames[idx], err))
-			} else {
-				slog.Info(fmt.Sprintf("subroutine error: %+v", err))
+			if err != nil && !errors.Is(err, context.Canceled) {
+				if r.funcNames[idx] != "" {
+					slog.Info(fmt.Sprintf("subroutine %s error: %+v", r.funcNames[idx], err))
+				} else {
+					slog.Info(fmt.Sprintf("subroutine error: %+v", err))
+				}
 			}
 			errc <- err
 			atomic.AddInt32(&waitCount, -1)
@@ -136,6 +142,7 @@ func (r *runner) Run(ctx context.Context) error {
 	waitOrTimeout(r.stopTimeout, &waitCount)
 
 	if errors.Is(err, context.Canceled) {
+		slog.Info("await: stopped on context canceled")
 		return nil
 	}
 
