@@ -3,16 +3,29 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"reflect"
 	"strings"
+
+	"github.com/gorilla/schema"
 )
+
+var schemaDecoder *schema.Decoder
+
+func init() {
+	schemaDecoder = schema.NewDecoder()
+	schemaDecoder.SetAliasTag("json")
+	schemaDecoder.IgnoreUnknownKeys(true)
+}
 
 type call struct {
 	stringFunc func() string
 	handler    http.HandlerFunc
+	template   Template
 
 	// I have no idea how authz and audit hooks should look.
 	// We don't have user info in the rpc package context.
@@ -45,6 +58,19 @@ func (c call) String() string {
 	return c.stringFunc()
 }
 
+type Template struct {
+	RouteMethod string
+	RoutePath   string
+
+	MethodName   string
+	RequestType  string
+	ResponseType string
+}
+
+func (c call) Template() Template {
+	return c.template
+}
+
 func (c call) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	c.handler(w, r)
 }
@@ -58,12 +84,19 @@ func RPC[Rq, Rp any](
 		resp Rp
 	)
 
+	ft := reflect.ValueOf(callme).Type()
+	reqT := structToTypeDef(req)
+	reqName := structToTypeName(req)
+	respT := structToTypeDef(resp)
+	respName := structToTypeName(resp)
 	c := call{
 		stringFunc: func() string {
-			ft := reflect.ValueOf(callme).Type()
-			reqT := structToTypeDef(req)
-			respT := structToTypeDef(resp)
-			return fmt.Sprintf("%v\n\t%s\n\t%s", ft, reqT, respT)
+			return fmt.Sprintf("%s\n\t%v\n\t%v", ft, reqT, respT)
+		},
+		template: Template{
+			MethodName:   ft.Name(),
+			RequestType:  reqName,
+			ResponseType: respName,
 		},
 	}
 
@@ -83,20 +116,44 @@ func RPC[Rq, Rp any](
 
 		// Deserialize request
 		var rq Rq
-		err := json.NewDecoder(r.Body).Decode(&rq)
-		if err != nil {
-			handleErr(ctx, rw, err)
-			return
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			// Deserialize query parameters
+			err := schemaDecoder.Decode(&rq, r.URL.Query())
+			if err != nil {
+				handleErr(ctx, rw, err)
+				return
+			}
+		default:
+			err := r.ParseForm()
+			if err != nil {
+				handleErr(ctx, rw, err)
+				return
+			}
+			// Body Form Values > URL query parameters
+			err = schemaDecoder.Decode(&rq, r.Form)
+			if err != nil {
+				handleErr(ctx, rw, err)
+				return
+			}
+			switch r.Header.Get("Content-Type") {
+			case "application/json":
+				err = json.NewDecoder(r.Body).Decode(&rq)
+				if err != nil && !errors.Is(err, io.EOF) {
+					handleErr(ctx, rw, err)
+					return
+				}
+			}
 		}
 
 		// Do Validation
 		switch v := any(rq).(type) {
-		case interface{ Validate(context.Context) error }:
+		case ValidatorContext:
 			if err := v.Validate(ctx); err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
-		case interface{ Validate() error }:
+		case Validator:
 			if err := v.Validate(); err != nil {
 				handleErr(ctx, rw, err)
 				return
@@ -203,6 +260,23 @@ func joinWithCommas(slice []string) string {
 	return returnString
 }
 
+func structToTypeName(s any) string {
+	typ := reflect.TypeOf(s)
+
+	switch typ.Kind() {
+	case reflect.Struct:
+		typeName := typ.Name()
+		if typeName == "" {
+			typeName = "struct"
+		}
+		return typeName
+	case reflect.Ptr:
+		return "*" + structToTypeName(reflect.New(typ.Elem()).Elem().Interface())
+	default:
+		return typ.String() // For basic types, just return the type name
+	}
+}
+
 func structToTypeDef(s any) string {
 	typ := reflect.TypeOf(s)
 
@@ -218,7 +292,8 @@ func structToTypeDef(s any) string {
 			typeName = "struct"
 		}
 		return typeName + " {" + strings.Join(fields, "; ") + "}"
-
+	case reflect.Ptr:
+		return "*" + structToTypeDef(reflect.New(typ.Elem()).Elem().Interface())
 	default:
 		return typ.String() // For basic types, just return the type name
 	}
