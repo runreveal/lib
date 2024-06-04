@@ -139,7 +139,7 @@ func (r *runner) Run(ctx context.Context) error {
 
 	cancel(fmt.Errorf("await: %w", err))
 
-	waitOrTimeout(r.stopTimeout, &waitCount)
+	err = waitOrTimeout(r.stopTimeout, &waitCount, err)
 
 	if errors.Is(err, context.Canceled) {
 		slog.Info("await: stopped on context canceled")
@@ -151,18 +151,18 @@ func (r *runner) Run(ctx context.Context) error {
 
 // waitTimeout will return either when the context is canceled or when the
 // counter reaches 0. It will check the counter every 10ms.
-func waitOrTimeout(timeout time.Duration, counter *int32) {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	for {
-		select {
-		case <-time.After(timeout):
-			slog.Error("await: timed out waiting for subroutines to finish")
-		case <-ticker.C:
-			if atomic.LoadInt32(counter) == 0 {
-				return
-			}
+func waitOrTimeout(timeout time.Duration, counter *int32, err error) error {
+	slog.Info(fmt.Sprintf("await: waiting %s for subroutines to finish", timeout))
+	for i := 0 * time.Second; i < timeout; i += 100 * time.Millisecond {
+		if atomic.LoadInt32(counter) == 0 {
+			return err
 		}
+		time.Sleep(100 * time.Millisecond)
 	}
+	if err != nil {
+		return fmt.Errorf("await: shutdown timeout: %w", err)
+	}
+	return nil
 }
 
 // ListenAndServe provides a graceful shutdown for an http.Server.
