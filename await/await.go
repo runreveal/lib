@@ -132,7 +132,9 @@ func (r *runner) Run(ctx context.Context) error {
 		slog.Error("stopping on signal", "signal", sig)
 	case <-ctx.Done():
 		err = ctx.Err()
-		slog.Error("stopping on context done", "err", err)
+		if !errors.Is(err, context.Canceled) {
+			slog.Error("error on context done", "err", err)
+		}
 	case err = <-errc:
 		slog.Info("await: stopping on error returned", "err", err)
 	}
@@ -142,7 +144,6 @@ func (r *runner) Run(ctx context.Context) error {
 	err = waitOrTimeout(r.stopTimeout, &waitCount, err)
 
 	if errors.Is(err, context.Canceled) {
-		slog.Info("await: stopped on context canceled")
 		return nil
 	}
 
