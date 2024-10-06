@@ -36,21 +36,21 @@ type call struct {
 	// Debating if we should get and pass the route name to the hook, but that's
 	// on the request too.  Doing so would tightly couple us to a router
 	// implementation.
-	authzHook func(ctx context.Context, reqObj any) error
-	auditHook func(ctx context.Context, reqObj any) error
+	prehook  func(ctx context.Context, reqObj any) error
+	posthook func(ctx context.Context, reqObj, respObj any, err error) error
 }
 
 type RPCOption func(*call)
 
-func WithAuthzHook(hook func(ctx context.Context, reqObj any) error) RPCOption {
+func WithPreHook(hook func(ctx context.Context, reqObj any) error) RPCOption {
 	return func(c *call) {
-		c.authzHook = hook
+		c.prehook = hook
 	}
 }
 
-func WithAuditHook(hook func(ctx context.Context, reqObj any) error) RPCOption {
+func WithPostHook(hook func(context.Context, any, any, error) error) RPCOption {
 	return func(c *call) {
-		c.auditHook = hook
+		c.posthook = hook
 	}
 }
 
@@ -124,18 +124,23 @@ func RPC[Rq, Rp any](
 				handleErr(ctx, rw, err)
 				return
 			}
+
 		default:
+			// ParseForm is a no-op if the content-type is not application/x-www-form-urlencoded
 			err := r.ParseForm()
 			if err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
+
 			// Body Form Values > URL query parameters
+			// if ParseForm is a no-op, r.Form is non-nil but empty
 			err = schemaDecoder.Decode(&rq, r.Form)
 			if err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
+
 			switch r.Header.Get("Content-Type") {
 			case "application/json":
 				err = json.NewDecoder(r.Body).Decode(&rq)
@@ -160,17 +165,9 @@ func RPC[Rq, Rp any](
 			}
 		}
 
-		// Authorization hook
-		if c.authzHook != nil {
-			if err := c.authzHook(ctx, rq); err != nil {
-				handleErr(ctx, rw, err)
-				return
-			}
-		}
-
-		// Audit logging hook
-		if c.auditHook != nil {
-			if err := c.auditHook(ctx, rq); err != nil {
+		// pre call hook
+		if c.prehook != nil {
+			if err := c.prehook(ctx, rq); err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
@@ -178,6 +175,14 @@ func RPC[Rq, Rp any](
 
 		// Call the procedure
 		resp, err := callme(ctx, rq)
+
+		// post call hook
+		if c.posthook != nil {
+			if e2 := c.posthook(ctx, rq, resp, err); e2 != nil {
+				slog.Warn("posthook failed")
+			}
+		}
+
 		if err != nil {
 			handleErr(ctx, rw, err)
 			return
