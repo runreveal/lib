@@ -3,6 +3,7 @@ module github.com/runreveal/lib/rpc
 go 1.21.4
 
 require (
+	github.com/go-playground/form/v4 v4.2.1
 	github.com/gorilla/mux v1.8.1
 	github.com/runreveal/lib/await v0.0.0-20231128193746-50c2ad68891c
 	github.com/stretchr/testify v1.7.0

@@ -11,15 +11,14 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/gorilla/schema"
+	"github.com/go-playground/form/v4"
 )
 
-var schemaDecoder *schema.Decoder
+var schemaDecoder *form.Decoder
 
 func init() {
-	schemaDecoder = schema.NewDecoder()
-	schemaDecoder.SetAliasTag("json")
-	schemaDecoder.IgnoreUnknownKeys(true)
+	schemaDecoder = form.NewDecoder()
+	schemaDecoder.SetTagName("json")
 }
 
 type call struct {
@@ -115,11 +114,11 @@ func RPC[Rq, Rp any](
 		ctx = context.WithValue(ctx, respContextKey, rw)
 
 		// Deserialize request
-		var rq Rq
+		var rq = new(Rq)
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
 			// Deserialize query parameters
-			err := schemaDecoder.Decode(&rq, r.URL.Query())
+			err := schemaDecoder.Decode(rq, r.URL.Query())
 			if err != nil {
 				handleErr(ctx, rw, err)
 				return
@@ -135,7 +134,7 @@ func RPC[Rq, Rp any](
 
 			// Body Form Values > URL query parameters
 			// if ParseForm is a no-op, r.Form is non-nil but empty
-			err = schemaDecoder.Decode(&rq, r.Form)
+			err = schemaDecoder.Decode(rq, r.Form)
 			if err != nil {
 				handleErr(ctx, rw, err)
 				return
@@ -143,7 +142,7 @@ func RPC[Rq, Rp any](
 
 			switch r.Header.Get("Content-Type") {
 			case "application/json":
-				err = json.NewDecoder(r.Body).Decode(&rq)
+				err = json.NewDecoder(r.Body).Decode(rq)
 				if err != nil && !errors.Is(err, io.EOF) {
 					handleErr(ctx, rw, err)
 					return
@@ -152,7 +151,7 @@ func RPC[Rq, Rp any](
 		}
 
 		// Do Validation
-		switch v := any(rq).(type) {
+		switch v := any(*rq).(type) {
 		case ValidatorContext:
 			if err := v.Validate(ctx); err != nil {
 				handleErr(ctx, rw, err)
@@ -167,18 +166,18 @@ func RPC[Rq, Rp any](
 
 		// pre call hook
 		if c.prehook != nil {
-			if err := c.prehook(ctx, rq); err != nil {
+			if err := c.prehook(ctx, *rq); err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
 		}
 
 		// Call the procedure
-		resp, err := callme(ctx, rq)
+		resp, err := callme(ctx, *rq)
 
 		// post call hook
 		if c.posthook != nil {
-			if e2 := c.posthook(ctx, rq, resp, err); e2 != nil {
+			if e2 := c.posthook(ctx, *rq, resp, err); e2 != nil {
 				slog.Warn("posthook failed")
 			}
 		}
