@@ -115,32 +115,50 @@ func RPC[Rq, Rp any](
 
 		// Deserialize request
 		var rq = new(Rq)
+
+		var err error
+
 		switch r.Method {
 		case http.MethodGet, http.MethodHead:
 			// Deserialize query parameters
-			err := schemaDecoder.Decode(rq, r.URL.Query())
+			err = schemaDecoder.Decode(rq, r.URL.Query())
 			if err != nil {
 				handleErr(ctx, rw, err)
 				return
 			}
 
 		default:
-			// ParseForm is a no-op if the content-type is not application/x-www-form-urlencoded
-			err := r.ParseForm()
-			if err != nil {
-				handleErr(ctx, rw, err)
-				return
-			}
 
-			// Body Form Values > URL query parameters
-			// if ParseForm is a no-op, r.Form is non-nil but empty
-			err = schemaDecoder.Decode(rq, r.Form)
-			if err != nil {
-				handleErr(ctx, rw, err)
-				return
-			}
+			hdr := r.Header.Get("Content-Type")
 
-			switch r.Header.Get("Content-Type") {
+			switch hdr {
+			case "application/x-www-form-urlencoded":
+				// if type of Rq is a map or slice, don't support this method
+				if reflect.TypeOf(*rq).Kind() == reflect.Slice {
+					handleErr(ctx, rw, errors.New("form decoding not supported for slices"))
+					return
+				}
+
+				if reflect.TypeOf(*rq).Kind() == reflect.Map {
+					handleErr(ctx, rw, errors.New("form decoding not supported for maps"))
+					return
+				}
+
+				// ParseForm is a no-op if the content-type is not application/x-www-form-urlencoded
+				err = r.ParseForm()
+				if err != nil {
+					handleErr(ctx, rw, err)
+					return
+				}
+
+				// Body Form Values > URL query parameters
+				// if ParseForm is a no-op, r.Form is non-nil but empty
+				err = schemaDecoder.Decode(rq, r.Form)
+				if err != nil {
+					handleErr(ctx, rw, err)
+					return
+				}
+
 			case "application/json":
 				err = json.NewDecoder(r.Body).Decode(rq)
 				if err != nil && !errors.Is(err, io.EOF) {
