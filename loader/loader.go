@@ -12,6 +12,13 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// LoadConfig loads a configuration from a byte slice into the given config.
+// The config must be a pointer to a struct.
+// It parses the byteslice as hujson, which allows for C-style comments and
+// trailing commas on arrays and maps.
+// It then unmarshals the JSON into the config struct.
+// Finally, it replaces any environment variables in the struct with their
+// values referenced by the corresponding environment variables.
 func LoadConfig(bts []byte, cfg any) error {
 	bts, err := hujson.Standardize(bts)
 	if err != nil {
@@ -52,6 +59,9 @@ func loadTypeReg(typ string) (any, error) {
 	return factory, nil
 }
 
+// Register registers a factory method for a type T with the given type name. T
+// is typically an interface that is implmented by the struct of type given by
+// the name.
 func Register[T any](name string, factory func() Builder[T]) {
 	registry.Lock()
 	defer registry.Unlock()
