@@ -5,25 +5,92 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/gorilla/mux"
 )
 
-func PrintRoutes(r *mux.Router, w io.Writer) {
-	err := r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
+// PrintOptions holds all configuration options for PrintRoutes
+type PrintOptions struct {
+	methodFilter   *regexp.Regexp
+	pathFilter     *regexp.Regexp
+	nameFilter     *regexp.Regexp
+	includeHandler bool
+}
+
+// Option defines the functional option type for configuring PrintRoutes
+type Option func(*PrintOptions)
+
+// WithMethodFilter adds a regex filter for HTTP methods
+func WithMethodFilter(pattern string) Option {
+	return func(o *PrintOptions) {
+		if pattern != "" {
+			o.methodFilter = regexp.MustCompile(pattern)
+		}
+	}
+}
+
+// WithPathFilter adds a regex filter for route paths
+func WithPathFilter(pattern string) Option {
+	return func(o *PrintOptions) {
+		if pattern != "" {
+			o.pathFilter = regexp.MustCompile(pattern)
+		}
+	}
+}
+
+// WithNameFilter adds a regex filter for route names
+func WithNameFilter(pattern string) Option {
+	return func(o *PrintOptions) {
+		if pattern != "" {
+			o.nameFilter = regexp.MustCompile(pattern)
+		}
+	}
+}
+
+// WithHandlerInfo configures whether handler information should be included
+func WithHandlerInfo(include bool) Option {
+	return func(o *PrintOptions) {
+		o.includeHandler = include
+	}
+}
+
+// defaultOptions returns the default configuration
+func defaultOptions() *PrintOptions {
+	return &PrintOptions{
+		includeHandler: false,
+	}
+}
+
+// PrintRoutes prints all routes in the router that match the given filters
+func PrintRoutes(r *mux.Router, w io.Writer, opts ...Option) error {
+	options := defaultOptions()
+	for _, opt := range opts {
+		opt(options)
+	}
+
+	return r.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err := route.GetPathTemplate()
 		if err != nil {
 			fmt.Fprintln(w, "Path template err:", err)
+			return nil
 		}
+
+		// Apply path filter
+		if options.pathFilter != nil && !options.pathFilter.MatchString(pathTemplate) {
+			return nil
+		}
+
 		routeName := route.GetName()
 		if routeName == "" {
 			routeName = "<noname>"
 		}
-		// pathRegexp, err := route.GetPathRegexp()
-		// if err != nil {
-		// 	fmt.Fprintln("Path regexp err:", err)
-		// }
+
+		// Apply name filter
+		if options.nameFilter != nil && !options.nameFilter.MatchString(routeName) {
+			return nil
+		}
 
 		methods, err := route.GetMethods()
 		if err != nil {
@@ -31,28 +98,47 @@ func PrintRoutes(r *mux.Router, w io.Writer) {
 				methods = []string{"ANY"}
 			} else {
 				fmt.Fprintln(w, "Methods err:", err)
+				return nil
 			}
 		}
+
 		handler := route.GetHandler()
-		for {
-			if h, ok := handler.(interface{ GetHandler() http.Handler }); ok {
-				handler = h.GetHandler()
-			} else {
-				break
+		if options.includeHandler {
+			for {
+				if h, ok := handler.(interface{ GetHandler() http.Handler }); ok {
+					handler = h.GetHandler()
+				} else {
+					break
+				}
 			}
 		}
+
 		for _, method := range methods {
-			if method == "OPTIONS" {
+			// Apply method filter and OPTIONS skip
+			if (method == "OPTIONS") ||
+				(options.methodFilter != nil && !options.methodFilter.MatchString(method)) {
 				continue
 			}
-			fmt.Fprintf(w, "%s %s `%s`\n"+
-				"	%s\n", method, pathTemplate, routeName, handler)
+
+			if options.includeHandler {
+				fmt.Fprintf(w, "%s %s `%s`\n\t%s\n",
+					method, pathTemplate, routeName, handler)
+			} else {
+				fmt.Fprintf(w, "%s %s `%s`\n",
+					method, pathTemplate, routeName)
+			}
 		}
 		return nil
 	})
-	if err != nil {
-		fmt.Fprintln(w, err)
-	}
+}
+
+type Template struct {
+	RouteMethod string
+	RoutePath   string
+
+	MethodName   string
+	RequestType  string
+	ResponseType string
 }
 
 func Codegen(r *mux.Router, w io.Writer) {
@@ -72,10 +158,6 @@ func Codegen(r *mux.Router, w io.Writer) {
 		if routeName == "" {
 			routeName = "<noname>"
 		}
-		// pathRegexp, err := route.GetPathRegexp()
-		// if err != nil {
-		// 	fmt.Fprintln("Path regexp err:", err)
-		// }
 
 		methods, err := route.GetMethods()
 		if err != nil {
@@ -116,8 +198,8 @@ func Codegen(r *mux.Router, w io.Writer) {
 			if err != nil {
 				fmt.Fprintln(w, err)
 			}
-			// fmt.Fprintf(w, "%s %s `%s`\n"+
-			// 	"	%s\n", method, pathTemplate, routeName, tpl)
+			fmt.Fprintf(w, "%s %s `%s`\n"+
+				"	%s\n", method, pathTemplate, routeName, tpl)
 		}
 		return nil
 	})
@@ -139,8 +221,7 @@ func convertPathToName(path string) string {
 }
 
 var tmpl = `
-
-func (c *Client) {{ .MethodName }}(ctx context.Context, req types.{{ .RequestType }}) (*types.{{ .ResponseType }}, error) {
+func (c *Client) {{ .MethodName }}(ctx context.Context, req {{ .RequestType }}) ({{ .ResponseType }}, error) {
 	rb := c.newReq().
 		Path("{{ .RoutePath }}").
 		Method("{{ .RouteMethod }}").
@@ -150,7 +231,7 @@ func (c *Client) {{ .MethodName }}(ctx context.Context, req types.{{ .RequestTyp
 	if err != nil {
 		return nil, fmt.Errorf("runreveal client: %w", err)
 	}
-	var resp types.{{ .ResponseType }}
+	var resp {{ .ResponseType }}
 	err = c.do(req, &resp)
 	return &resp, err
 }

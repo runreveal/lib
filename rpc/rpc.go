@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"path"
 	"reflect"
 	"strings"
 
@@ -55,15 +56,6 @@ func WithPostHook(hook func(context.Context, any, any, error) error) RPCOption {
 
 func (c call) String() string {
 	return c.stringFunc()
-}
-
-type Template struct {
-	RouteMethod string
-	RoutePath   string
-
-	MethodName   string
-	RequestType  string
-	ResponseType string
 }
 
 func (c call) Template() Template {
@@ -128,7 +120,6 @@ func RPC[Rq, Rp any](
 			}
 
 		default:
-
 			hdr := r.Header.Get("Content-Type")
 
 			switch hdr {
@@ -289,7 +280,12 @@ func structToTypeName(s any) string {
 	case reflect.Struct:
 		typeName := typ.Name()
 		if typeName == "" {
-			typeName = "struct"
+			typeName = "struct{}"
+		}
+		pkgPath := typ.PkgPath()
+		if pkgPath != "" {
+			last := path.Base(pkgPath)
+			typeName = last + "." + typeName
 		}
 		return typeName
 	case reflect.Ptr:
