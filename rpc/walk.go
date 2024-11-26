@@ -198,8 +198,9 @@ func Codegen(r *mux.Router, w io.Writer) {
 			if err != nil {
 				fmt.Fprintln(w, err)
 			}
-			fmt.Fprintf(w, "%s %s `%s`\n"+
-				"	%s\n", method, pathTemplate, routeName, tpl)
+
+			// fmt.Fprintf(w, "%s %s `%s`\n"+
+			// 	"	%s\n", method, pathTemplate, routeName, tpl)
 		}
 		return nil
 	})
