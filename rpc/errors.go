@@ -29,7 +29,7 @@ func RegisterErrorHandler(ce CustomError) {
 
 // HandleErr is equivlant to errResp but using more flexible error types
 func handleErr(ctx context.Context, w *responseWrapper, err error) {
-	errorHelper(fmt.Sprintf("error: %+v\n", err))
+	errorHelper("error: %v\n", err)
 
 	if w.status != 0 {
 		slog.Error("response sent before error was handled")
@@ -43,7 +43,7 @@ func handleErr(ctx context.Context, w *responseWrapper, err error) {
 			w.WriteHeader(ce.Status())
 			encErr := e.Encode(ce.Format(ctx))
 			if encErr != nil {
-				errorHelper(fmt.Sprintf("error encountered encoding error response: %v", encErr))
+				errorHelper("error encountered encoding error response: %v", encErr)
 			}
 			return
 		}
@@ -81,7 +81,7 @@ func handleErr(ctx context.Context, w *responseWrapper, err error) {
 		encErr = e.Encode(RPCResponse{Error: "unknown error"})
 	}
 	if encErr != nil {
-		errorHelper(fmt.Sprintf("error encountered encoding error response: %v", encErr))
+		errorHelper("error encountered encoding error response: %v", encErr)
 	}
 }
 

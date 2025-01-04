@@ -154,10 +154,6 @@ func Codegen(r *mux.Router, w io.Writer) {
 		if err != nil {
 			fmt.Fprintln(w, "Path template err:", err)
 		}
-		routeName := route.GetName()
-		if routeName == "" {
-			routeName = "<noname>"
-		}
 
 		methods, err := route.GetMethods()
 		if err != nil {
@@ -216,7 +212,7 @@ func convertPathToName(path string) string {
 	path = strings.Trim(path, "/")
 	words := strings.Split(path, "/")
 	for i, word := range words {
-		words[i] = strings.Title(word)
+		words[i] = strings.Title(word) //nolint:staticcheck
 	}
 	return strings.Join(words, "")
 }

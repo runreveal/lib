@@ -46,8 +46,7 @@ func (e errA) Format(context.Context) any {
 }
 
 type errB struct {
-	count int
-	errw  error
+	errw error
 }
 
 func (e errB) Error() string {

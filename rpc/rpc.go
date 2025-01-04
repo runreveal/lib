@@ -242,7 +242,7 @@ func success(rw *responseWrapper, result any) {
 	}
 }
 
-func printFunctionSignature(fn any) string {
+func printFunctionSignature(fn any) string { //nolint:golint,unused
 	// Get the type of the function
 	funcType := reflect.TypeOf(fn)
 
@@ -262,7 +262,7 @@ func printFunctionSignature(fn any) string {
 		joinWithCommas(params), joinWithCommas(returns))
 }
 
-func joinWithCommas(slice []string) string {
+func joinWithCommas(slice []string) string { //nolint:golint,unused
 	returnString := ""
 	for i, s := range slice {
 		returnString += s

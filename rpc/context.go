@@ -8,8 +8,6 @@ import (
 type contextKey struct{ name string }
 
 var (
-	userContextKey = contextKey{name: "userKey"}
-	wkspContextKey = contextKey{name: "workspaceKey"}
 	reqContextKey  = contextKey{name: "requestKey"}
 	respContextKey = contextKey{name: "responseKey"}
 )
