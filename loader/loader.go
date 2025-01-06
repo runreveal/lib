@@ -33,17 +33,17 @@ func LoadConfig(bts []byte, cfg any) error {
 	return nil
 }
 
-type Builder[O, T any] interface {
-	Configure(...func(O)) (T, error)
+type Builder[T any] interface {
+	Configure(...Option) (T, error)
 }
 
-type Registry[O, T any] struct {
-	m map[string]func() Builder[O, T]
+type Registry[T any] struct {
+	m map[string]func() Builder[T]
 	sync.RWMutex
 }
 
 var registry = struct {
-	// map[typeString]registry[O, T] where T is variadic and typeString is:
+	// map[typeString]registry[T] where T is variadic and typeString is:
 	// reflect.TypeOf(T).String()
 	m map[string]any
 	sync.RWMutex
@@ -64,7 +64,7 @@ func loadTypeReg(typ string) (any, error) {
 // Register registers a factory method for a type T with the given type name. T
 // is typically an interface that is implmented by the struct of type given by
 // the name.
-func Register[O, T any](name string, factory func() Builder[O, T]) {
+func Register[T any](name string, factory func() Builder[T]) {
 	registry.Lock()
 	defer registry.Unlock()
 
@@ -74,28 +74,28 @@ func Register[O, T any](name string, factory func() Builder[O, T]) {
 	typStr := reflect.TypeOf(typ).String()
 	typReg, ok := registry.m[typStr]
 	if !ok {
-		typReg = &Registry[O, T]{
-			m: make(map[string]func() Builder[O, T]),
+		typReg = &Registry[T]{
+			m: make(map[string]func() Builder[T]),
 		}
 		registry.m[typStr] = typReg
 	}
-	registryForType := typReg.(*Registry[O, T])
+	registryForType := typReg.(*Registry[T])
 	registryForType.m[name] = factory
 }
 
 // Loader is a struct which can dyanmically unmarshal any type T
-type Loader[O, T any] struct {
-	Builder[O, T]
+type Loader[T any] struct {
+	Builder[T]
 }
 
-func (b *Loader[O, T]) UnmarshalJSON(raw []byte) error {
+func (b *Loader[T]) UnmarshalJSON(raw []byte) error {
 	typ := new(T)
 	typStr := reflect.TypeOf(typ).String()
 	typReg, err := loadTypeReg(typStr)
 	if err != nil {
 		return err
 	}
-	registryForType := typReg.(*Registry[O, T])
+	registryForType := typReg.(*Registry[T])
 
 	loadType := gjson.Get(string(raw), "type")
 	if !loadType.Exists() {
@@ -112,7 +112,11 @@ func (b *Loader[O, T]) UnmarshalJSON(raw []byte) error {
 	return json.Unmarshal(raw, b.Builder)
 }
 
-func (l Loader[O, T]) Configure(opts ...func(O)) (T, error) {
+type Option interface {
+	Apply()
+}
+
+func (l Loader[T]) Configure(opts ...Option) (T, error) {
 	var t T
 	if l.Builder == nil {
 		return t, errors.New("no type registered for configuration")
