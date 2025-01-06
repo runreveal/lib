@@ -34,7 +34,7 @@ func LoadConfig(bts []byte, cfg any) error {
 }
 
 type Builder[T any] interface {
-	Configure(...Option) (T, error)
+	Configure() (T, error)
 }
 
 type Registry[T any] struct {
@@ -112,16 +112,12 @@ func (b *Loader[T]) UnmarshalJSON(raw []byte) error {
 	return json.Unmarshal(raw, b.Builder)
 }
 
-type Option interface {
-	Apply()
-}
-
-func (l Loader[T]) Configure(opts ...Option) (T, error) {
+func (l Loader[T]) Configure() (T, error) {
 	var t T
 	if l.Builder == nil {
 		return t, errors.New("no type registered for configuration")
 	}
-	return l.Builder.Configure(opts...)
+	return l.Builder.Configure()
 }
 
 func replaceEnv(v reflect.Value) {
