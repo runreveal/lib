@@ -1,6 +1,7 @@
 package loader
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -82,6 +83,7 @@ func Register[T any](name string, factory func() Builder[T]) {
 	registryForType.m[name] = factory
 }
 
+// Loader is a struct which can dyanmically unmarshal any type T
 type Loader[T any] struct {
 	Builder[T]
 }
@@ -111,6 +113,10 @@ func (b *Loader[T]) UnmarshalJSON(raw []byte) error {
 }
 
 func (l Loader[T]) Configure() (T, error) {
+	var t T
+	if l.Builder == nil {
+		return t, errors.New("no type registered for configuration")
+	}
 	return l.Builder.Configure()
 }
 
