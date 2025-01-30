@@ -153,7 +153,7 @@ func (r *runner) Run(ctx context.Context) error {
 // waitTimeout will return either when the context is canceled or when the
 // counter reaches 0. It will check the counter every 10ms.
 func waitOrTimeout(timeout time.Duration, counter *int32, err error) error {
-	slog.Info(fmt.Sprintf("await: waiting %s for subroutines to finish", timeout))
+	// slog.Info(fmt.Sprintf("await: waiting %s for subroutines to finish", timeout))
 	for i := 0 * time.Second; i < timeout; i += 100 * time.Millisecond {
 		if atomic.LoadInt32(counter) == 0 {
 			return err
