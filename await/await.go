@@ -26,12 +26,13 @@ func (rf RunFunc) Run(ctx context.Context) error {
 }
 
 type runner struct {
-	funcs       []RunFunc
-	funcNames   []string
-	withSignals bool
-	startMu     sync.Mutex
-	started     bool
-	stopTimeout time.Duration
+	funcs        []RunFunc
+	funcNames    []string
+	withSignals  bool
+	startMu      sync.Mutex
+	started      bool
+	stopTimeout  time.Duration
+	proceedOnNil bool
 }
 
 type Option func(*runner)
@@ -44,6 +45,14 @@ func WithStopTimeout(d time.Duration) Option {
 	return func(r *runner) {
 		r.stopTimeout = d
 	}
+}
+
+// WithContinueOnNil will allow the runner to continue if a functions returns a
+// nil error. This is useful for running jobs that have a fixed lifetime and
+// you want to run all of them, but still cancel and report if errors are returned
+// which aren't nil
+func WithContinueOnNil(r *runner) {
+	r.proceedOnNil = true
 }
 
 func New(opts ...Option) *runner {
@@ -127,6 +136,7 @@ func (r *runner) Run(ctx context.Context) error {
 		signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
 	}
 
+loop:
 	select {
 	case sig := <-sigc:
 		slog.Error("stopping on signal", "signal", sig)
@@ -136,13 +146,20 @@ func (r *runner) Run(ctx context.Context) error {
 			slog.Error("error on context done", "err", err)
 		}
 	case err = <-errc:
-		slog.Info("await: stopping on error returned", "err", err)
+		if err != nil {
+			slog.Warn("await: stopping on error returned", "err", err)
+		} else {
+			if !r.proceedOnNil {
+				slog.Info("await: stopping because a subroutine finished")
+			} else {
+				goto loop
+			}
+		}
 	}
 
 	cancel(fmt.Errorf("await: %w", err))
 
 	err = waitOrTimeout(r.stopTimeout, &waitCount, err)
-
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
