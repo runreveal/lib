@@ -104,14 +104,14 @@ func (r *runner) Run(ctx context.Context) error {
 
 	errc := make(chan error, len(r.funcs))
 	// this cancel func cancels all subroutines
-	ctx, cancel := context.WithCancelCause(ctx)
+	subctx, cancel := context.WithCancelCause(ctx)
 
 	var waitCount int32
 
 	for i, f := range r.funcs {
 		atomic.AddInt32(&waitCount, 1)
 		go func(fn func(context.Context) error, idx int) {
-			err := fn(ctx)
+			err := fn(subctx)
 			if err != nil && !errors.Is(err, context.Canceled) {
 				if r.funcNames[idx] != "" {
 					slog.Info(fmt.Sprintf("subroutine %s error: %+v", r.funcNames[idx], err))
@@ -119,8 +119,11 @@ func (r *runner) Run(ctx context.Context) error {
 					slog.Info(fmt.Sprintf("subroutine error: %+v", err))
 				}
 			}
-			errc <- err
+			// Order matters for the following two statements.
+			// We must decrement before writing to the channel so that waitCount is
+			// accurate when we read the remaining waitCount below after reading errC.
 			atomic.AddInt32(&waitCount, -1)
+			errc <- err
 		}(f, i)
 	}
 
@@ -140,8 +143,8 @@ loop:
 	select {
 	case sig := <-sigc:
 		slog.Error("stopping on signal", "signal", sig)
-	case <-ctx.Done():
-		err = ctx.Err()
+	case <-subctx.Done():
+		err = subctx.Err()
 		if !errors.Is(err, context.Canceled) {
 			slog.Error("error on context done", "err", err)
 		}
@@ -149,10 +152,10 @@ loop:
 		if err != nil {
 			slog.Warn("await: stopping on error returned", "err", err)
 		} else {
-			if !r.proceedOnNil {
-				slog.Info("await: stopping because a subroutine finished")
-			} else {
+			if r.proceedOnNil && atomic.LoadInt32(&waitCount) > 0 {
 				goto loop
+			} else {
+				slog.Debug("await: stopping on subroutine(s) complete")
 			}
 		}
 	}
