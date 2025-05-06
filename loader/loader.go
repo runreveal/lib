@@ -112,6 +112,10 @@ func (b *Loader[T]) UnmarshalJSON(raw []byte) error {
 	return json.Unmarshal(raw, b.Builder)
 }
 
+func (l Loader[T]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(l.Builder)
+}
+
 func (l Loader[T]) Configure() (T, error) {
 	var t T
 	if l.Builder == nil {
