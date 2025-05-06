@@ -1,6 +1,7 @@
 package loader_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
@@ -40,10 +41,10 @@ func TestLoadConfigUnreg(t *testing.T) {
 
 func TestLoadConfig(t *testing.T) {
 
-	loader.Register("aTypeOfSource", func() loader.Builder[Source] { return &srcConfigA{} })
-	loader.Register("sourceThatCanB", func() loader.Builder[Source] { return &srcConfigB{} })
-	loader.Register("aTypeOfDest", func() loader.Builder[Destination] { return &dstConfigA{} })
-	loader.Register("bAllThatUCanB", func() loader.Builder[Destination] { return &dstConfigB{} })
+	loader.Register("aTypeOfSource", func() loader.Builder[Source] { return &srcConfigA{Type: "aTypeOfSource"} })
+	loader.Register("sourceThatCanB", func() loader.Builder[Source] { return &srcConfigB{Type: "sourceThatCanB"} })
+	loader.Register("aTypeOfDest", func() loader.Builder[Destination] { return &dstConfigA{Type: "aTypeOfDest"} })
+	loader.Register("bAllThatUCanB", func() loader.Builder[Destination] { return &dstConfigB{Type: "bAllThatUCanB"} })
 
 	tests := []struct {
 		name     string
@@ -81,12 +82,12 @@ func TestLoadConfig(t *testing.T) {
 			expected: Config{
 				Name: "jimmy",
 				Sources: []loader.Loader[Source]{
-					{&srcConfigA{"localhost"}},
-					{&srcConfigB{"gym"}},
+					{&srcConfigA{Type: "aTypeOfSource", Host: "localhost"}},
+					{&srcConfigB{Type: "sourceThatCanB", Topic: "gym"}},
 				},
 				Destinations: []loader.Loader[Destination]{
-					{&dstConfigA{"localhost"}},
-					{&dstConfigB{"output"}},
+					{&dstConfigA{Type: "aTypeOfDest", Host: "localhost"}},
+					{&dstConfigB{Type: "bAllThatUCanB", Topic: "output"}},
 				},
 			},
 			err: false,
@@ -151,6 +152,7 @@ type srcB struct{ topic string }
 func (s *srcB) Recv() (string, error) { return s.topic, nil }
 
 type srcConfigA struct {
+	Type string `json:"type"`
 	Host string `json:"host"`
 }
 
@@ -159,6 +161,7 @@ func (c *srcConfigA) Configure() (Source, error) {
 }
 
 type srcConfigB struct {
+	Type  string `json:"type"`
 	Topic string `json:"topic"`
 }
 
@@ -175,7 +178,8 @@ type dstB struct{ topic string }
 func (s *dstB) Send(string) error { return nil }
 
 type dstConfigA struct {
-	Host string
+	Type string `json:"type"`
+	Host string `json:"host"`
 }
 
 func (c *dstConfigA) Configure() (Destination, error) {
@@ -183,9 +187,48 @@ func (c *dstConfigA) Configure() (Destination, error) {
 }
 
 type dstConfigB struct {
-	Topic string
+	Type  string `json:"type"`
+	Topic string `json:"topic"`
 }
 
 func (c *dstConfigB) Configure() (Destination, error) {
 	return &dstB{c.Topic}, nil
+}
+
+func TestMarshalJSON(t *testing.T) {
+	// Register test types if not already registered from other tests
+	loader.Register("testSource", func() loader.Builder[Source] { return &srcConfigA{Type: "testSource"} })
+
+	tests := []struct {
+		name     string
+		loader   loader.Loader[Source]
+		expected string
+	}{
+		{
+			name:     "marshal source config",
+			loader:   loader.Loader[Source]{&srcConfigA{Type: "testSource", Host: "test-host"}},
+			expected: `{"type":"testSource","host":"test-host"}`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			// Marshal the loader
+			data, err := json.Marshal(test.loader)
+			assert.NoError(t, err)
+
+			// Compare with expected JSON string
+			assert.JSONEq(t, test.expected, string(data))
+
+			// Try unmarshaling back to verify round-trip
+			var newLoader loader.Loader[Source]
+			err = json.Unmarshal(data, &newLoader)
+			assert.NoError(t, err)
+
+			// Verify the unmarshaled object produces the same JSON
+			newData, err := json.Marshal(newLoader)
+			assert.NoError(t, err)
+			assert.JSONEq(t, test.expected, string(newData))
+		})
+	}
 }
