@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"strings"
+	"regexp"
 	"sync"
 
 	"github.com/segmentio/encoding/json"
@@ -17,19 +17,19 @@ import (
 // The config must be a pointer to a struct.
 // It parses the byteslice as hujson, which allows for C-style comments and
 // trailing commas on arrays and maps.
-// It then unmarshals the JSON into the config struct.
-// Finally, it replaces any environment variables in the struct with their
-// values referenced by the corresponding environment variables.
+// It replaces any environment variables in the JSON string before unmarshalling,
+// properly escaping values to maintain JSON structure.
+// Finally, it unmarshals the JSON into the config struct.
 func LoadConfig(bts []byte, cfg any) error {
 	bts, err := hujson.Standardize(bts)
 	if err != nil {
 		return err
 	}
+	bts = replaceEnvInJSON(bts)
 	err = json.Unmarshal(bts, cfg)
 	if err != nil {
 		return err
 	}
-	replaceEnv(reflect.ValueOf(cfg))
 	return nil
 }
 
@@ -124,35 +124,33 @@ func (l Loader[T]) Configure() (T, error) {
 	return l.Builder.Configure()
 }
 
-func replaceEnv(v reflect.Value) {
-	if !v.IsValid() {
-		return
-	}
+var envVarRegex = regexp.MustCompile(`"\$([A-Za-z_][A-Za-z0-9_]*)"`)
 
-	switch v.Kind() {
-	case reflect.String:
-		val := v.String()
-		if v.CanSet() && strings.HasPrefix(val, "$") {
-			envVar, _ := strings.CutPrefix(val, "$")
-			v.SetString(os.Getenv(envVar))
-		}
-	case reflect.Ptr:
-		replaceEnv(v.Elem())
-	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ {
-			replaceEnv(v.Field(i))
-		}
-	case reflect.Slice:
-		for i := 0; i < v.Len(); i++ {
-			replaceEnv(v.Index(i))
-		}
-	case reflect.Interface:
-		if v.IsNil() {
-			return
-		}
-		copied := reflect.New(v.Elem().Type()).Elem()
-		copied.Set(v.Elem())
-		replaceEnv(copied)
-		v.Set(copied)
+// replaceEnvInJSON replaces environment variables in JSON string values
+// while properly escaping the replacement values to maintain JSON structure
+func replaceEnvInJSON(jsonBytes []byte) []byte {
+	return envVarRegex.ReplaceAllFunc(jsonBytes, func(match []byte) []byte {
+		// Extract the environment variable name (without the $ prefix and quotes)
+		envVar := string(match[2 : len(match)-1])
+		envValue := os.Getenv(envVar)
+
+		// Escape backslashes and quotes in the environment value
+		escapedValue := escapeForJSON(envValue)
+
+		// Return the escaped value wrapped in quotes
+		return []byte(`"` + escapedValue + `"`)
+	})
+}
+
+// escapeForJSON escapes a string for JSON using Go's json.Marshal
+// This ensures RFC 7159/8259 compliance for all special characters
+func escapeForJSON(s string) string {
+	// Use json.Marshal to properly escape the string per RFC 7159/8259
+	escaped, err := json.Marshal(s)
+	if err != nil {
+		// This should never happen for a string, but fallback just in case
+		return s
 	}
+	// Remove the outer quotes that json.Marshal adds
+	return string(escaped[1 : len(escaped)-1])
 }
