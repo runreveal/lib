@@ -69,6 +69,52 @@ func TestReplaceEnvInJSON(t *testing.T) {
 			expected: `{"servers": ["host1", "host2"]}`,
 		},
 		{
+			name:     "real world config with deeply nested env var",
+			input:    `{
+				"pprof": "localhost:6060",
+				"sources": {
+					"journald": {
+						"maxLineLenKB": 200,
+						"type": "journald"
+					}
+				},
+				"destinations": {
+					"s3_batch": {
+						"type": "s3b",
+						"batchSize": 10000,
+						"flushFrequency": "30s",
+						"s3": {
+							"type": "s3",
+							"region": "us-east-2",
+							"bucket": "$REVEALD_BUCKET"
+						}
+					}
+				}
+			}`,
+			envVars:  map[string]string{"REVEALD_BUCKET": "reveald-log-upload-staging"},
+			expected: `{
+				"pprof": "localhost:6060",
+				"sources": {
+					"journald": {
+						"maxLineLenKB": 200,
+						"type": "journald"
+					}
+				},
+				"destinations": {
+					"s3_batch": {
+						"type": "s3b",
+						"batchSize": 10000,
+						"flushFrequency": "30s",
+						"s3": {
+							"type": "s3",
+							"region": "us-east-2",
+							"bucket": "reveald-log-upload-staging"
+						}
+					}
+				}
+			}`,
+		},
+		{
 			name:     "complex escaping case",
 			input:    `{"script": "$COMPLEX_SCRIPT"}`,
 			envVars:  map[string]string{"COMPLEX_SCRIPT": `echo "Hello \"World\"" && echo 'C:\Program Files\test'`},
@@ -145,5 +191,75 @@ func TestEscapeForJSON(t *testing.T) {
 			assert.Equal(t, test.expected, result)
 		})
 	}
+}
+
+func TestLoadConfigWithNestedEnvironmentVars(t *testing.T) {
+	// Test the actual LoadConfig function with a realistic nested config
+	type S3Config struct {
+		Type   string `json:"type"`
+		Region string `json:"region"`
+		Bucket string `json:"bucket"`
+	}
+	
+	type S3BatchConfig struct {
+		Type           string   `json:"type"`
+		BatchSize      int      `json:"batchSize"`
+		FlushFrequency string   `json:"flushFrequency"`
+		S3             S3Config `json:"s3"`
+	}
+	
+	type JournaldConfig struct {
+		MaxLineLenKB int    `json:"maxLineLenKB"`
+		Type         string `json:"type"`
+	}
+	
+	type RealWorldConfig struct {
+		Pprof        string                    `json:"pprof"`
+		Sources      map[string]JournaldConfig `json:"sources"`
+		Destinations map[string]S3BatchConfig  `json:"destinations"`
+	}
+
+	// Set up the environment variable
+	os.Setenv("REVEALD_BUCKET", "reveald-log-upload-staging")
+	defer os.Unsetenv("REVEALD_BUCKET")
+
+	configJSON := []byte(`{
+		"pprof": "localhost:6060",
+		"sources": {
+			"journald": {
+				"maxLineLenKB": 200,
+				"type": "journald"
+			}
+		},
+		"destinations": {
+			"s3_batch": {
+				"type": "s3b",
+				"batchSize": 10000,
+				"flushFrequency": "30s",
+				"s3": {
+					"type": "s3",
+					"region": "us-east-2",
+					"bucket": "$REVEALD_BUCKET"
+				}
+			}
+		}
+	}`)
+
+	var config RealWorldConfig
+	err := LoadConfig(configJSON, &config)
+	assert.NoError(t, err)
+
+	// Verify the structure was parsed correctly
+	assert.Equal(t, "localhost:6060", config.Pprof)
+	assert.Equal(t, "journald", config.Sources["journald"].Type)
+	assert.Equal(t, 200, config.Sources["journald"].MaxLineLenKB)
+	
+	// Verify the nested environment variable was replaced correctly
+	assert.Equal(t, "s3b", config.Destinations["s3_batch"].Type)
+	assert.Equal(t, 10000, config.Destinations["s3_batch"].BatchSize)
+	assert.Equal(t, "30s", config.Destinations["s3_batch"].FlushFrequency)
+	assert.Equal(t, "s3", config.Destinations["s3_batch"].S3.Type)
+	assert.Equal(t, "us-east-2", config.Destinations["s3_batch"].S3.Region)
+	assert.Equal(t, "reveald-log-upload-staging", config.Destinations["s3_batch"].S3.Bucket)
 }
 

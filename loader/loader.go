@@ -25,7 +25,12 @@ func LoadConfig(bts []byte, cfg any) error {
 	if err != nil {
 		return err
 	}
+
+	// Debug: Print before and after environment variable replacement
+	fmt.Printf("DEBUG: Config before env replacement:\n%s\n", string(bts))
 	bts = replaceEnvInJSON(bts)
+	fmt.Printf("DEBUG: Config after env replacement:\n%s\n", string(bts))
+	
 	err = json.Unmarshal(bts, cfg)
 	if err != nil {
 		return err
