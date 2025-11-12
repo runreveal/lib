@@ -39,7 +39,6 @@ func TestLoadConfigUnreg(t *testing.T) {
 	assert.Error(t, err)
 }
 
-
 func TestLoadConfig(t *testing.T) {
 
 	loader.Register("aTypeOfSource", func() loader.Builder[Source] { return &srcConfigA{Type: "aTypeOfSource"} })

@@ -146,4 +146,3 @@ func TestEscapeForJSON(t *testing.T) {
 		})
 	}
 }
-
