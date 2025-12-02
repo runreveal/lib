@@ -163,7 +163,7 @@ loop:
 	cancel(fmt.Errorf("await: %w", err))
 
 	err = waitOrTimeout(r.stopTimeout, &waitCount, err)
-	if errors.Is(err, context.Canceled) {
+	if err == context.Canceled {
 		return nil
 	}
 
