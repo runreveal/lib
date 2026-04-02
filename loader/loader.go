@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"sync"
 
 	"github.com/segmentio/encoding/json"
@@ -81,6 +82,27 @@ func Register[T any](name string, factory func() Builder[T]) {
 	}
 	registryForType := typReg.(*Registry[T])
 	registryForType.m[name] = factory
+}
+
+// List returns the names of all registered types for the given type T.
+func List[T any]() []string {
+	typ := new(T)
+	typStr := reflect.TypeOf(typ).String()
+	registry.RLock()
+	typReg, ok := registry.m[typStr]
+	registry.RUnlock()
+	if !ok {
+		return nil
+	}
+	r := typReg.(*Registry[T])
+	r.RLock()
+	defer r.RUnlock()
+	names := make([]string, 0, len(r.m))
+	for name := range r.m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Loader is a struct which can dyanmically unmarshal any type T

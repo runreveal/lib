@@ -195,6 +195,30 @@ func (c *dstConfigB) Configure() (Destination, error) {
 	return &dstB{c.Topic}, nil
 }
 
+func TestList(t *testing.T) {
+	// Register a few source types
+	loader.Register("zSource", func() loader.Builder[Source] { return &srcConfigA{Type: "zSource"} })
+	loader.Register("aSource", func() loader.Builder[Source] { return &srcConfigA{Type: "aSource"} })
+	loader.Register("mSource", func() loader.Builder[Source] { return &srcConfigA{Type: "mSource"} })
+
+	names := loader.List[Source]()
+	assert.NotEmpty(t, names)
+
+	// Verify sorted order
+	for i := 1; i < len(names); i++ {
+		assert.True(t, names[i-1] <= names[i], "expected sorted order, got %q before %q", names[i-1], names[i])
+	}
+
+	// Verify our registered names are present
+	assert.Contains(t, names, "aSource")
+	assert.Contains(t, names, "mSource")
+	assert.Contains(t, names, "zSource")
+
+	// Verify List returns nil for an unregistered type
+	type Unregistered interface{ Noop() }
+	assert.Nil(t, loader.List[Unregistered]())
+}
+
 func TestMarshalJSON(t *testing.T) {
 	// Register test types if not already registered from other tests
 	loader.Register("testSource", func() loader.Builder[Source] { return &srcConfigA{Type: "testSource"} })
