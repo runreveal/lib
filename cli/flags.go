@@ -57,21 +57,6 @@ func (fs *FlagSet) IsSet(name string) bool {
 	return fs.explicit[name]
 }
 
-// DumpValues returns a map of flag name → current value string.
-// For a FlagSet obtained after parsing, this reflects defaults plus any
-// explicit flag values (stored in defVal after setValue is called).
-func (fs *FlagSet) DumpValues() map[string]any {
-	m := make(map[string]any, len(fs.defs))
-	for _, d := range fs.defs {
-		if fs.explicit[d.long] {
-			m[d.long] = "(set)"
-		} else {
-			m[d.long] = d.defVal
-		}
-	}
-	return m
-}
-
 // Parse parses args, sets flag values, and returns remaining positional args.
 func (fs *FlagSet) Parse(args []string) ([]string, error) {
 	var positional []string

@@ -13,12 +13,10 @@ import (
 	"reflect"
 	"runtime/debug"
 	"strings"
-	"sync"
 )
 
-// handlerFlagSets maps handler pointer → *FlagSet during execution,
-// enabling IsSet() to query which flags were explicitly set.
-var handlerFlagSets sync.Map
+// flagSetKey is the context key used to carry the *FlagSet during command execution.
+type flagSetKey struct{}
 
 // Runnable is the core interface every command handler must implement.
 type Runnable interface {
@@ -95,16 +93,19 @@ func WithArgs(f ArgsFunc) CmdOption {
 	return func(o *cmdOptions) { o.argsFunc = f }
 }
 
-// Command creates a command node with an optional set of child nodes.
-func Command(name, desc string, handler Runnable, children ...Node) Node {
-	return CommandWithOptions(name, desc, handler, nil, children...)
-}
-
-// CommandWithOptions creates a command node with options and optional children.
-func CommandWithOptions(name, desc string, handler Runnable, opts []CmdOption, children ...Node) Node {
+// Command creates a command node. Each element of opts may be a Node (child
+// subcommand) or a CmdOption (behavioural option); they are distinguished by
+// type at runtime.
+func Command(name, desc string, handler Runnable, opts ...any) Node {
 	o := cmdOptions{}
+	var children []Node
 	for _, opt := range opts {
-		opt(&o)
+		switch v := opt.(type) {
+		case Node:
+			children = append(children, v)
+		case CmdOption:
+			v(&o)
+		}
 	}
 	return &commandNode{name: name, desc: desc, handler: handler, children: children, opts: o}
 }
@@ -303,10 +304,8 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 		return 1, nil
 	}
 
-	// Register the FlagSet so IsSet() can query it during Run
-	handlerPtr := reflect.ValueOf(handler).Pointer()
-	handlerFlagSets.Store(handlerPtr, fs)
-	defer handlerFlagSets.Delete(handlerPtr)
+	// Carry the FlagSet in context so IsSet() can query it during Run.
+	ctx = context.WithValue(ctx, flagSetKey{}, fs)
 
 	// Load config file if configured
 	if a.configFlag != "" {
@@ -364,27 +363,41 @@ func buildChain(middlewares []Middleware, info CommandInfo, final func(context.C
 	return chain
 }
 
+// FlagSetFromContext returns the *FlagSet stored in ctx during command
+// execution, or nil if called outside of a command handler.
+func FlagSetFromContext(ctx context.Context) *FlagSet {
+	fs, _ := ctx.Value(flagSetKey{}).(*FlagSet)
+	return fs
+}
+
 // IsSet reports whether a flag was explicitly set on the command line.
-// Must be called from within Run (or Validate) to return meaningful results.
-func IsSet(handler Runnable, flagName string) bool {
-	handlerPtr := reflect.ValueOf(handler).Pointer()
-	if val, ok := handlerFlagSets.Load(handlerPtr); ok {
-		return val.(*FlagSet).IsSet(flagName)
+// Must be called from within Run to return meaningful results.
+func IsSet(ctx context.Context, flagName string) bool {
+	if fs := FlagSetFromContext(ctx); fs != nil {
+		return fs.IsSet(flagName)
 	}
 	return false
 }
 
-// DumpConfig returns the resolved flag configuration as a map.
-// When called from within Run, it reflects the live parsed values.
+// DumpConfig returns the resolved configuration of handler as a map of
+// flag name → current field value. It reflects directly over the handler
+// struct, so it captures values set by both CLI flags and config files.
 func DumpConfig(handler Runnable) map[string]any {
-	handlerPtr := reflect.ValueOf(handler).Pointer()
-	if val, ok := handlerFlagSets.Load(handlerPtr); ok {
-		return val.(*FlagSet).DumpValues()
+	rv := reflect.ValueOf(handler)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
 	}
-	// Outside of Run — build a fresh FlagSet to get at least the defaults.
-	fs, _, err := buildFlagSet(handler)
+	fields, err := scanFields(rv.Type())
 	if err != nil {
 		return nil
 	}
-	return fs.DumpValues()
+	m := make(map[string]any, len(fields))
+	for _, fi := range fields {
+		if fi.flagLong == "" {
+			continue
+		}
+		fieldVal := fieldByIndex(rv, fi.fieldIndex)
+		m[fi.flagLong] = fieldVal.Interface()
+	}
+	return m
 }

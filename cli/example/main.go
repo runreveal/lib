@@ -103,13 +103,9 @@ func main() {
 
 	app.AddCommand(
 		cli.Command("serve", "Start the HTTP server", &ServeCmd{}),
-		cli.CommandWithOptions("ping", "Ping one or more hosts", &PingCmd{},
-			[]cli.CmdOption{cli.WithArgs(cli.MinArgs(0))},
-		),
+		cli.Command("ping", "Ping one or more hosts", &PingCmd{}, cli.WithArgs(cli.MinArgs(0))),
 		cli.Group("admin", "Administrative commands",
-			cli.CommandWithOptions("migrate", "Run database migrations", &MigrateCmd{},
-				[]cli.CmdOption{cli.WithArgs(cli.NoArgs)},
-			),
+			cli.Command("migrate", "Run database migrations", &MigrateCmd{}, cli.WithArgs(cli.NoArgs)),
 		),
 	)
 

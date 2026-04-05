@@ -6,10 +6,30 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 
 	"github.com/runreveal/lib/loader"
+	sgjson "github.com/segmentio/encoding/json"
 	"github.com/tidwall/gjson"
 )
+
+// envVarRegex matches JSON string values that are exactly an env-var reference,
+// e.g. "$MY_VAR". The whole quoted token is replaced with the env var's value.
+var envVarRegex = regexp.MustCompile(`"\$([A-Za-z_][A-Za-z0-9_]*)"`)
+
+// replaceEnvInJSON replaces "$VAR" tokens inside JSON string values with the
+// corresponding environment variable's value, properly re-encoded as JSON.
+func replaceEnvInJSON(data []byte) []byte {
+	return envVarRegex.ReplaceAllFunc(data, func(match []byte) []byte {
+		name := string(match[2 : len(match)-1]) // strip leading `"$` and trailing `"`
+		val := os.Getenv(name)
+		encoded, err := json.Marshal(val)
+		if err != nil {
+			return match // should never happen for a plain string
+		}
+		return encoded
+	})
+}
 
 // loadConfigIntoHandler reads the config file (path from the named flag),
 // processes it via loader.LoadConfig, then applies config-tagged fields.
@@ -41,13 +61,16 @@ func loadConfigIntoHandler(handler Runnable, fs *FlagSet, configFlagName string,
 		return fmt.Errorf("reading config file %q: %w", configPath, err)
 	}
 
-	// Process via loader (hujson + env replacement)
+	// Process via loader (hujson standardisation).
 	var raw json.RawMessage
 	if err := loader.LoadConfig(data, &raw); err != nil {
 		return fmt.Errorf("parsing config file %q: %w", configPath, err)
 	}
 
-	rawStr := string(raw)
+	// Apply env-var substitution on the raw JSON bytes. loader.LoadConfig
+	// performs reflection-based replacement on structs, but json.RawMessage
+	// is opaque to that pass, so we apply the regex replacement ourselves.
+	rawStr := string(replaceEnvInJSON(raw))
 
 	for _, fi := range fields {
 		if fi.configKey == "" {
@@ -106,5 +129,5 @@ func unmarshalIntoField(v reflect.Value, jsonStr string) error {
 		return fmt.Errorf("field is not addressable")
 	}
 	ptr := v.Addr().Interface()
-	return json.Unmarshal([]byte(jsonStr), ptr)
+	return sgjson.Unmarshal([]byte(jsonStr), ptr)
 }

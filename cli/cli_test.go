@@ -86,8 +86,8 @@ type isSetCmd struct {
 	nameWasSet bool
 }
 
-func (i *isSetCmd) Run(_ context.Context, _ []string) error {
-	i.nameWasSet = cli.IsSet(i, "name")
+func (i *isSetCmd) Run(ctx context.Context, _ []string) error {
+	i.nameWasSet = cli.IsSet(ctx, "name")
 	return nil
 }
 
@@ -501,9 +501,7 @@ func TestEdge_NoArgs(t *testing.T) {
 func TestEdge_ArgsValidation_NoArgs(t *testing.T) {
 	var buf bytes.Buffer
 	app := cli.New("app", "test", cli.WithOutput(&buf))
-	app.AddCommand(cli.CommandWithOptions("run", "run", &noopCmd{},
-		[]cli.CmdOption{cli.WithArgs(cli.NoArgs)},
-	))
+	app.AddCommand(cli.Command("run", "run", &noopCmd{}, cli.WithArgs(cli.NoArgs)))
 
 	code := app.Run(context.Background(), []string{"run", "extra"})
 	assert.Equal(t, 1, code)
@@ -512,9 +510,7 @@ func TestEdge_ArgsValidation_NoArgs(t *testing.T) {
 func TestEdge_ArgsValidation_ExactArgs(t *testing.T) {
 	var buf bytes.Buffer
 	app := cli.New("app", "test", cli.WithOutput(&buf))
-	app.AddCommand(cli.CommandWithOptions("run", "run", &noopCmd{},
-		[]cli.CmdOption{cli.WithArgs(cli.ExactArgs(2))},
-	))
+	app.AddCommand(cli.Command("run", "run", &noopCmd{}, cli.WithArgs(cli.ExactArgs(2))))
 
 	code := app.Run(context.Background(), []string{"run", "a", "b"})
 	assert.Equal(t, 0, code)
@@ -690,4 +686,39 @@ func TestMiddleware_CommandInfo(t *testing.T) {
 	code := app.Run(context.Background(), []string{"admin", "migrate"})
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "admin migrate", capturedInfo.Name)
+}
+
+func TestConfig_HuJSON(t *testing.T) {
+	handler := &configHandler{}
+	// HuJSON allows C-style comments and trailing commas.
+	f := writeConfigFile(t, `{
+		// database connection settings
+		"database": {
+			"host": "hujson-host",
+			"port": 5433, // trailing comma
+		}
+	}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithConfigFlag("config"))
+	app.AddCommand(cli.Command("run", "run", handler))
+
+	code := app.Run(context.Background(), []string{"run", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "hujson-host", handler.DB.Host)
+	assert.Equal(t, 5433, handler.DB.Port)
+}
+
+func TestConfig_EnvVarReplacement(t *testing.T) {
+	handler := &overrideableHandler{}
+	t.Setenv("CLI_TEST_HOST", "env-replaced-host")
+	f := writeConfigFile(t, `{"host": "$CLI_TEST_HOST"}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithConfigFlag("config"))
+	app.AddCommand(cli.Command("run", "run", handler))
+
+	code := app.Run(context.Background(), []string{"run", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "env-replaced-host", handler.Host)
 }
