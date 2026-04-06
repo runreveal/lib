@@ -228,6 +228,12 @@ func (a *App) Run(ctx context.Context, args []string) (exitCode int) {
 }
 
 func (a *App) run(ctx context.Context, args []string) (int, error) {
+	// Handle completion commands before normal routing so they stay
+	// hidden from help output and don't interfere with user commands.
+	if code, handled := a.handleCompletion(args); handled {
+		return code, nil
+	}
+
 	// Check for top-level --version / --help before routing
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-version") {
 		if a.version != "" {
