@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 
 	"github.com/runreveal/lib/cli"
@@ -40,6 +39,10 @@ func (w *WebhookConfig) Configure() (Source, error) {
 	return &WebhookSource{path: w.Path}, nil
 }
 
+func (w *WebhookConfig) Help() string {
+	return `Receives events via HTTP webhooks. Example: {"type": "webhook", "path": "/hooks/github"}`
+}
+
 type WebhookSource struct{ path string }
 
 func (w *WebhookSource) Name() string { return "webhook:" + w.path }
@@ -52,6 +55,10 @@ type SyslogConfig struct {
 
 func (s *SyslogConfig) Configure() (Source, error) {
 	return &SyslogSource{addr: s.Addr}, nil
+}
+
+func (s *SyslogConfig) Help() string {
+	return `Listens for syslog messages over UDP. Example: {"type": "syslog", "addr": ":514"}`
 }
 
 type SyslogSource struct{ addr string }
@@ -77,6 +84,10 @@ type MemoryCacheConfig struct {
 
 func (m *MemoryCacheConfig) Configure() (Cache, error) {
 	return &MemoryCache{maxSize: m.MaxSize}, nil
+}
+
+func (m *MemoryCacheConfig) Help() string {
+	return `In-memory LRU cache. Example: {"type": "memory", "max_size": 1000}`
 }
 
 type MemoryCache struct{ maxSize int }
@@ -153,8 +164,9 @@ func (g *Globals) ExtraHelp() string {
 	return b.String()
 }
 
-// describeLoaderTypes lists registered loader types for T with their
-// config fields (derived from JSON struct tags on the builder).
+// describeLoaderTypes lists registered loader types for T. If a type's
+// builder implements loader.Helper, its Help() output is shown. Otherwise
+// just the type name is listed.
 func describeLoaderTypes[T any](b *strings.Builder) {
 	for _, name := range loader.List[T]() {
 		builder, ok := loader.Describe[T](name)
@@ -162,39 +174,12 @@ func describeLoaderTypes[T any](b *strings.Builder) {
 			fmt.Fprintf(b, "  %s\n", name)
 			continue
 		}
-		fields := describeFields(builder)
-		if len(fields) == 0 {
-			fmt.Fprintf(b, "  %s\n", name)
+		if h, ok := builder.(loader.Helper); ok {
+			fmt.Fprintf(b, "  %s — %s\n", name, h.Help())
 		} else {
-			fmt.Fprintf(b, "  %-12s %s\n", name, strings.Join(fields, ", "))
+			fmt.Fprintf(b, "  %s\n", name)
 		}
 	}
-}
-
-// describeFields reflects on a struct's JSON tags to produce
-// "name (type)" descriptions for each exported field, skipping "type".
-func describeFields(v any) []string {
-	t := reflect.TypeOf(v)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return nil
-	}
-	var out []string
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		tag := f.Tag.Get("json")
-		if tag == "" || tag == "-" {
-			continue
-		}
-		name, _, _ := strings.Cut(tag, ",")
-		if name == "type" {
-			continue
-		}
-		out = append(out, fmt.Sprintf("%s (%s)", name, f.Type.Name()))
-	}
-	return out
 }
 
 // ---------------------------------------------------------------------------

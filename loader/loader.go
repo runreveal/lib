@@ -131,6 +131,13 @@ func Describe[T any](name string) (Builder[T], bool) {
 	return factory(), true
 }
 
+// Helper is optionally implemented by Builder types to provide a
+// human-readable description of their configuration. Used by CLI
+// tools to show available config options in help output.
+type Helper interface {
+	Help() string
+}
+
 // Loader is a struct which can dyanmically unmarshal any type T
 type Loader[T any] struct {
 	Builder[T]
