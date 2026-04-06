@@ -1,9 +1,10 @@
 // Command example demonstrates the github.com/runreveal/lib/cli framework,
-// including await integration for long-running services.
+// including await integration for long-running services and config file loading.
 package main
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,6 +13,9 @@ import (
 	"github.com/runreveal/lib/await"
 	"github.com/runreveal/lib/cli"
 )
+
+//go:embed config.json
+var defaultConfig []byte
 
 // ---------------------------------------------------------------------------
 // Globals: shared flags + resources via Configure/Validate/Close
@@ -85,6 +89,24 @@ func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 type DaemonCmd struct {
 	APIAddr    string `cli:"api-addr"    usage:"API listen address"     default:":8080"`
 	MetricAddr string `cli:"metric-addr" usage:"metrics listen address" default:":9090"`
+	Cfg        DaemonConfig
+}
+
+type DaemonConfig struct {
+	APIAddr    string `json:"api_addr"`
+	MetricAddr string `json:"metric_addr"`
+}
+
+// Configure applies config file values as defaults for flags that
+// weren't explicitly set on the command line.
+func (d *DaemonCmd) Configure() error {
+	if d.Cfg.APIAddr != "" && d.APIAddr == ":8080" {
+		d.APIAddr = d.Cfg.APIAddr
+	}
+	if d.Cfg.MetricAddr != "" && d.MetricAddr == ":9090" {
+		d.MetricAddr = d.Cfg.MetricAddr
+	}
+	return nil
 }
 
 func (d *DaemonCmd) Validate() error {
@@ -121,6 +143,23 @@ func (d *DaemonCmd) Run(ctx context.Context, args []string) error {
 
 type WorkerCmd struct {
 	Interval time.Duration `cli:"interval,i" usage:"poll interval" default:"10s"`
+	Cfg      WorkerConfig
+}
+
+type WorkerConfig struct {
+	Interval string `json:"interval"`
+}
+
+// Configure applies config file values as defaults.
+func (w *WorkerCmd) Configure() error {
+	if w.Cfg.Interval != "" && w.Interval == 10*time.Second {
+		d, err := time.ParseDuration(w.Cfg.Interval)
+		if err != nil {
+			return fmt.Errorf("parsing worker interval: %w", err)
+		}
+		w.Interval = d
+	}
+	return nil
 }
 
 // Run demonstrates a polling worker that exits cleanly on SIGINT/SIGTERM.
@@ -167,26 +206,37 @@ func (m *MigrateCmd) Run(ctx context.Context, args []string) error {
 func main() {
 	globals := &Globals{}
 	serveCmd := &ServeCmd{}
+	daemonCmd := &DaemonCmd{}
+	workerCmd := &WorkerCmd{}
 
 	app := cli.New("example", "Example CLI demonstrating cli + await",
 		cli.WithVersion("1.0.0"),
 		cli.WithGlobals(globals),
 		cli.WithConfigFlag("config"),
+		cli.WithDefaultConfig(defaultConfig),
 	)
 
 	app.AddCommand(
-		// Long-running server with await + graceful shutdown
+		// Long-running server with await + graceful shutdown.
+		// DB config loaded from the "database" section of config.json.
 		cli.Command("serve", "Start the HTTP server", serveCmd,
 			cli.ConfigAt("database", &serveCmd.DB),
 		),
 
-		// Multiple services under one await runner
-		cli.Command("daemon", "Run all services", &DaemonCmd{}),
+		// Multiple services under one await runner.
+		// Addresses loaded from the "daemon" section of config.json,
+		// with CLI flags overriding config values via Configure().
+		cli.Command("daemon", "Run all services", daemonCmd,
+			cli.ConfigAt("daemon", &daemonCmd.Cfg),
+		),
 
-		// Background worker using context cancellation
-		cli.Command("worker", "Run the background worker", &WorkerCmd{}),
+		// Background worker using context cancellation.
+		// Interval loaded from the "worker" section of config.json.
+		cli.Command("worker", "Run the background worker", workerCmd,
+			cli.ConfigAt("worker", &workerCmd.Cfg),
+		),
 
-		// One-shot commands don't need await
+		// One-shot commands don't need await or config.
 		cli.Group("admin", "Administrative commands",
 			cli.Command("migrate", "Run database migrations", &MigrateCmd{},
 				cli.WithArgs(cli.NoArgs),

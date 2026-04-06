@@ -1,0 +1,17 @@
+{
+  // Example config for the CLI framework demo.
+  // HuJSON: comments and trailing commas are allowed.
+
+  "database": {
+    "dsn": "postgres://localhost:5432/example?sslmode=disable",
+  },
+
+  "daemon": {
+    "api_addr": ":8080",
+    "metric_addr": ":9090",
+  },
+
+  "worker": {
+    "interval": "5s",
+  },
+}
