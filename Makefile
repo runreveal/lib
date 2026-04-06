@@ -7,7 +7,7 @@ GOTAGS = testing
 
 GO ?= $(shell which go)
 
-export GOEXPERIMENT=nocoverageredesign
+# GOEXPERIMENT=nocoverageredesign was removed in Go 1.25
 
 .PHONY: test
 test:
