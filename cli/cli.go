@@ -404,12 +404,12 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 	// CVR lifecycle on handler: Configure → Validate
 	if c, ok := handler.(Configurer); ok {
 		if err := c.Configure(); err != nil {
-			return 1, err
+			return 1, fmt.Errorf("configure: %w", err)
 		}
 	}
 	if v, ok := handler.(Validator); ok {
 		if err := v.Validate(); err != nil {
-			return 1, err
+			return 1, fmt.Errorf("validate: %w", err)
 		}
 	}
 
@@ -428,11 +428,8 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 	info := CommandInfo{Name: path, Args: posArgs}
 	chain := buildChain(a.middlewares, info, runFn)
 
+	// Errors (including ExitError) propagate to App.Run which handles exit codes.
 	if err := chain(ctx); err != nil {
-		var exitErr *ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.Code, exitErr
-		}
 		return 1, err
 	}
 	return 0, nil

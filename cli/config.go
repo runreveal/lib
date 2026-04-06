@@ -13,19 +13,19 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// envVarRegex matches JSON string values that are exactly an env-var reference,
-// e.g. "$MY_VAR". The whole quoted token is replaced with the env var's value.
+// envVarRegex matches JSON string values that are exactly an env-var reference.
+// This duplicates loader's regex because the cli module may pin a loader version
+// that predates env var support, and because loader.LoadConfig into json.RawMessage
+// may not apply replacement to opaque byte values.
 var envVarRegex = regexp.MustCompile(`"\$([A-Za-z_][A-Za-z0-9_]*)"`)
 
-// replaceEnvInJSON replaces "$VAR" tokens inside JSON string values with the
-// corresponding environment variable's value, properly re-encoded as JSON.
 func replaceEnvInJSON(data []byte) []byte {
 	return envVarRegex.ReplaceAllFunc(data, func(match []byte) []byte {
-		name := string(match[2 : len(match)-1]) // strip leading `"$` and trailing `"`
+		name := string(match[2 : len(match)-1])
 		val := os.Getenv(name)
 		encoded, err := json.Marshal(val)
 		if err != nil {
-			return match // should never happen for a plain string
+			return match
 		}
 		return encoded
 	})

@@ -16,7 +16,7 @@ type flagDef struct {
 	defVal   string
 	typeName string // for help display
 	setValue func(s string) error
-	getBool  func() bool // non-nil only for bool flags
+	isBool   bool // true for boolean flags (value is optional)
 }
 
 // FlagSet is a parsed set of flag definitions.
@@ -95,7 +95,7 @@ func (fs *FlagSet) parseLong(raw string, remaining []string) (int, error) {
 		return 0, fmt.Errorf("unknown flag: --%s", name)
 	}
 
-	if def.getBool != nil {
+	if def.isBool {
 		// Bool flag: value is optional
 		if hasEq {
 			if err := def.setValue(val); err != nil {
@@ -154,7 +154,7 @@ func (fs *FlagSet) parseShort(raw string, remaining []string) (int, error) {
 		if !ok {
 			return 0, fmt.Errorf("unknown flag: -%s", char)
 		}
-		if def.getBool != nil {
+		if def.isBool {
 			if err := def.setValue("true"); err != nil {
 				return 0, err
 			}
@@ -178,7 +178,7 @@ func (fs *FlagSet) parseShort(raw string, remaining []string) (int, error) {
 		if !ok {
 			return 0, fmt.Errorf("unknown flag: -%s", char)
 		}
-		if def.getBool == nil {
+		if !def.isBool {
 			// Non-bool flag: rest of the string is the value
 			val := raw[j+1:]
 			if val == "" {
@@ -224,7 +224,7 @@ func makeFlagDef(long, short, usage, defVal string, ptr any) (*flagDef, error) {
 		def.setValue = func(s string) error { *p = &s; return nil }
 	case *bool:
 		def.typeName = ""
-		def.getBool = func() bool { return *p }
+		def.isBool = true
 		def.setValue = func(s string) error {
 			v, err := strconv.ParseBool(s)
 			if err != nil {
@@ -235,7 +235,7 @@ func makeFlagDef(long, short, usage, defVal string, ptr any) (*flagDef, error) {
 		}
 	case **bool:
 		def.typeName = ""
-		def.getBool = func() bool { return *p != nil && **p }
+		def.isBool = true
 		def.setValue = func(s string) error {
 			v, err := strconv.ParseBool(s)
 			if err != nil {
