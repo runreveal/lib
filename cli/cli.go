@@ -168,10 +168,17 @@ func WithGlobals(ptr any) AppOption {
 }
 
 // WithDefaultConfig registers a default configuration that can be printed
-// with "myapp default-config". Typically used with go:embed to ship a
-// reference config alongside the binary.
+// with "myapp defcon". Typically used with go:embed to ship a
+// reference config alongside the binary. The command name defaults to
+// "defcon" but can be overridden with WithDefaultConfigCommand.
 func WithDefaultConfig(data []byte) AppOption {
 	return func(a *App) { a.defaultConfig = data }
+}
+
+// WithDefaultConfigCommand overrides the command name used to print the
+// default config (default: "defcon").
+func WithDefaultConfigCommand(name string) AppOption {
+	return func(a *App) { a.defaultConfigCmd = name }
 }
 
 // WithOutput sets the writer for help/error output (default: os.Stderr).
@@ -185,9 +192,10 @@ type App struct {
 	desc          string
 	version       string
 	configFlag    string
-	globals       any // pointer to globals struct, if set
-	defaultConfig []byte
-	middlewares   []Middleware
+	globals          any // pointer to globals struct, if set
+	defaultConfig    []byte
+	defaultConfigCmd string
+	middlewares      []Middleware
 	children      []Node
 	output        io.Writer
 }
@@ -241,7 +249,11 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 	if code, handled := a.handleCompletion(args); handled {
 		return code, nil
 	}
-	if len(args) == 1 && args[0] == "default-config" {
+	defconCmd := a.defaultConfigCmd
+	if defconCmd == "" {
+		defconCmd = "defcon"
+	}
+	if len(args) == 1 && args[0] == defconCmd {
 		return a.handleDefaultConfig(), nil
 	}
 
