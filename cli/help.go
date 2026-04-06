@@ -64,7 +64,7 @@ func printGroupHelp(w io.Writer, appName, path, desc string, children []Node) {
 	fmt.Fprintf(w, "\nUse \"%s %s <command> --help\" for more information.\n", appName, path)
 }
 
-func printCommandHelp(w io.Writer, appName, path, desc string, handler Runnable, children []Node) {
+func printCommandHelp(w io.Writer, appName, path, desc string, handler Runnable, children []Node, globals any) {
 	if desc != "" {
 		fmt.Fprintf(w, "%s %s - %s\n\n", appName, path, desc)
 	} else {
@@ -87,12 +87,19 @@ func printCommandHelp(w io.Writer, appName, path, desc string, handler Runnable,
 		fmt.Fprintln(w)
 	}
 
-	// Print flags from handler
+	// Print flags from handler + globals
 	fs, _, err := buildFlagSet(handler)
-	if err == nil && len(fs.defs) > 0 {
-		fmt.Fprintf(w, "Flags:\n")
-		printFlagDefs(w, fs.defs)
-		fmt.Fprintln(w)
+	if err == nil {
+		if globals != nil {
+			addGlobalsToFlagSet(fs, globals)
+		}
+		if len(fs.defs) > 0 {
+			fmt.Fprintf(w, "Flags:\n")
+			printFlagDefs(w, fs.defs)
+			fmt.Fprintln(w)
+		} else {
+			fmt.Fprintf(w, "Flags:\n")
+		}
 	} else {
 		fmt.Fprintf(w, "Flags:\n")
 	}

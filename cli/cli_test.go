@@ -709,6 +709,156 @@ func TestConfig_HuJSON(t *testing.T) {
 	assert.Equal(t, 5433, handler.DB.Port)
 }
 
+// --- WithGlobals tests ---
+
+type testGlobals struct {
+	Verbose bool   `cli:"verbose,v" usage:"verbose"`
+	Config  string `cli:"config,c"  usage:"config file" default:"config.json"`
+}
+
+type simpleServeCmd struct {
+	Addr    string `cli:"addr" usage:"listen address" default:":8080"`
+	globals *testGlobals
+}
+
+func (s *simpleServeCmd) Run(ctx context.Context, _ []string) error {
+	s.globals = cli.GlobalsFromContext[testGlobals](ctx)
+	return nil
+}
+
+func TestGlobals_FlagsAvailable(t *testing.T) {
+	g := &testGlobals{}
+	cmd := &simpleServeCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(cli.Command("serve", "serve", cmd))
+
+	code := app.Run(context.Background(), []string{"serve", "--verbose", "--addr", ":9090"})
+	assert.Equal(t, 0, code)
+	assert.True(t, g.Verbose)
+	assert.Equal(t, ":9090", cmd.Addr)
+}
+
+func TestGlobals_FromContext(t *testing.T) {
+	g := &testGlobals{}
+	cmd := &simpleServeCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(cli.Command("serve", "serve", cmd))
+
+	code := app.Run(context.Background(), []string{"serve", "--verbose"})
+	assert.Equal(t, 0, code)
+	require.NotNil(t, cmd.globals)
+	assert.True(t, cmd.globals.Verbose)
+	assert.Equal(t, "config.json", cmd.globals.Config) // default
+}
+
+func TestGlobals_ConfigFlagOnGlobals(t *testing.T) {
+	type serveWithConfig struct {
+		DB dbSection `config:"database"`
+	}
+	handler := &struct {
+		serveWithConfig
+	}{}
+	handler.serveWithConfig = serveWithConfig{}
+
+	// Use a handler that has config tags but no config flag —
+	// the config flag is on globals.
+	g := &testGlobals{}
+	f := writeConfigFile(t, `{"database": {"host": "global-host", "port": 3306}}`)
+
+	configCmd := &configHandler{DB: dbSection{}}
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithGlobals(g),
+		cli.WithConfigFlag("config"),
+	)
+	app.AddCommand(cli.Command("run", "run", configCmd))
+
+	code := app.Run(context.Background(), []string{"run", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "global-host", configCmd.DB.Host)
+	assert.Equal(t, 3306, configCmd.DB.Port)
+}
+
+// --- ConfigAt tests ---
+
+type configAtCmd struct {
+	Addr string `cli:"addr" usage:"listen address" default:":8080"`
+	DB   dbSection
+}
+
+func (c *configAtCmd) Run(_ context.Context, _ []string) error { return nil }
+
+func TestConfigAt_BasicLoad(t *testing.T) {
+	g := &testGlobals{}
+	cmd := &configAtCmd{}
+	f := writeConfigFile(t, `{
+		"database": {"host": "configat-host", "port": 5432}
+	}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithGlobals(g),
+		cli.WithConfigFlag("config"),
+	)
+	app.AddCommand(cli.Command("serve", "serve", cmd,
+		cli.ConfigAt("database", &cmd.DB),
+	))
+
+	code := app.Run(context.Background(), []string{"serve", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "configat-host", cmd.DB.Host)
+	assert.Equal(t, 5432, cmd.DB.Port)
+}
+
+func TestConfigAt_NestedKey(t *testing.T) {
+	g := &testGlobals{}
+	cmd := &configAtCmd{}
+	f := writeConfigFile(t, `{
+		"services": {
+			"api": {"host": "nested-host", "port": 9090}
+		}
+	}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithGlobals(g),
+		cli.WithConfigFlag("config"),
+	)
+	app.AddCommand(cli.Command("serve", "serve", cmd,
+		cli.ConfigAt("services.api", &cmd.DB),
+	))
+
+	code := app.Run(context.Background(), []string{"serve", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "nested-host", cmd.DB.Host)
+	assert.Equal(t, 9090, cmd.DB.Port)
+}
+
+func TestConfigAt_MissingSectionSilent(t *testing.T) {
+	g := &testGlobals{}
+	cmd := &configAtCmd{}
+	f := writeConfigFile(t, `{"other": {}}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithGlobals(g),
+		cli.WithConfigFlag("config"),
+	)
+	app.AddCommand(cli.Command("serve", "serve", cmd,
+		cli.ConfigAt("database", &cmd.DB),
+	))
+
+	code := app.Run(context.Background(), []string{"serve", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "", cmd.DB.Host) // not populated
+}
+
 func TestConfig_EnvVarReplacement(t *testing.T) {
 	handler := &overrideableHandler{}
 	t.Setenv("CLI_TEST_HOST", "env-replaced-host")

@@ -10,7 +10,8 @@ import (
 	"github.com/runreveal/lib/cli"
 )
 
-// Globals are shared flags embedded into every command.
+// Globals holds flags shared across all commands. Registered once with
+// WithGlobals — no need to embed in every command struct.
 type Globals struct {
 	Verbose bool   `cli:"verbose,v" usage:"enable verbose output"`
 	Config  string `cli:"config,c"  usage:"config file path"      default:"config.json"`
@@ -18,12 +19,11 @@ type Globals struct {
 
 // ServeCmd is the handler for the "serve" subcommand.
 type ServeCmd struct {
-	Globals
 	Addr    string        `cli:"addr,a"    usage:"listen address"  default:":8080"`
 	Timeout time.Duration `cli:"timeout,t" usage:"request timeout" default:"30s"`
 
-	// DB is loaded from the config file's "database" section.
-	DB DBConfig `config:"database"`
+	// DB is loaded from the config file's "database" section via ConfigAt.
+	DB DBConfig
 }
 
 type DBConfig struct {
@@ -38,9 +38,10 @@ func (s *ServeCmd) Validate() error {
 }
 
 func (s *ServeCmd) Run(ctx context.Context, args []string) error {
-	if s.Verbose {
+	g := cli.GlobalsFromContext[Globals](ctx)
+	if g != nil && g.Verbose {
 		fmt.Printf("verbose mode enabled\n")
-		fmt.Printf("config file: %s\n", s.Config)
+		fmt.Printf("config file: %s\n", g.Config)
 		if s.DB.DSN != "" {
 			fmt.Printf("database DSN: %s\n", s.DB.DSN)
 		}
@@ -51,7 +52,6 @@ func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 
 // MigrateCmd is in the "admin" group.
 type MigrateCmd struct {
-	Globals
 	DryRun bool   `cli:"dry-run" usage:"print migrations without running"`
 	DB     string `cli:"db"      usage:"database name"                    default:"prod"`
 }
@@ -67,7 +67,6 @@ func (m *MigrateCmd) Run(ctx context.Context, args []string) error {
 
 // PingCmd demonstrates positional args.
 type PingCmd struct {
-	Globals
 	Count int `cli:"count,n" usage:"number of pings" default:"3"`
 }
 
@@ -86,7 +85,11 @@ func (p *PingCmd) Run(ctx context.Context, args []string) error {
 
 func main() {
 	// Middleware: log every command execution
-	loggingMW := func(ctx context.Context, info cli.CommandInfo, next func(context.Context) error) error {
+	loggingMW := func(
+		ctx context.Context,
+		info cli.CommandInfo,
+		next func(context.Context) error,
+	) error {
 		fmt.Printf("[log] running command: %s\n", info.Name)
 		err := next(ctx)
 		if err != nil {
@@ -95,17 +98,27 @@ func main() {
 		return err
 	}
 
+	globals := &Globals{}
+	serveCmd := &ServeCmd{}
+
 	app := cli.New("example", "Example CLI demonstrating the cli framework",
 		cli.WithVersion("1.0.0"),
+		cli.WithGlobals(globals),
 		cli.WithConfigFlag("config"),
 		cli.WithMiddleware(loggingMW),
 	)
 
 	app.AddCommand(
-		cli.Command("serve", "Start the HTTP server", &ServeCmd{}),
-		cli.Command("ping", "Ping one or more hosts", &PingCmd{}, cli.WithArgs(cli.MinArgs(0))),
+		cli.Command("serve", "Start the HTTP server", serveCmd,
+			cli.ConfigAt("database", &serveCmd.DB),
+		),
+		cli.Command("ping", "Ping one or more hosts", &PingCmd{},
+			cli.WithArgs(cli.MinArgs(0)),
+		),
 		cli.Group("admin", "Administrative commands",
-			cli.Command("migrate", "Run database migrations", &MigrateCmd{}, cli.WithArgs(cli.NoArgs)),
+			cli.Command("migrate", "Run database migrations", &MigrateCmd{},
+				cli.WithArgs(cli.NoArgs),
+			),
 		),
 	)
 

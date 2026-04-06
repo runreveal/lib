@@ -31,24 +31,39 @@ func replaceEnvInJSON(data []byte) []byte {
 	})
 }
 
-// loadConfigIntoHandler reads the config file (path from the named flag),
-// processes it via loader.LoadConfig, then applies config-tagged fields.
-// Only sets fields that were NOT explicitly set via CLI flags.
-// fields must be pre-scanned via buildFlagSet to avoid redundant reflection.
-func loadConfigIntoHandler(handler Runnable, fs *FlagSet, configFlagName string, fields []fieldInfo) error {
+// resolveConfigJSON finds the config file path (from globals or handler),
+// reads and processes it, and returns the JSON string. Returns "" if no
+// config file is available.
+func resolveConfigJSON(
+	handler Runnable,
+	globals any,
+	fs *FlagSet,
+	configFlagName string,
+	globalFields []fieldInfo,
+	handlerFields []fieldInfo,
+) (string, error) {
 	if _, ok := fs.byLong[configFlagName]; !ok {
-		return nil
+		return "", nil
 	}
 
-	rv := reflect.ValueOf(handler)
-	if rv.Kind() == reflect.Ptr {
-		rv = rv.Elem()
+	// Find the config file path — check globals first, then handler.
+	var configPath string
+	if globals != nil {
+		rv := reflect.ValueOf(globals)
+		if rv.Kind() == reflect.Ptr {
+			rv = rv.Elem()
+		}
+		configPath = stringFieldForFlag(rv, globalFields, configFlagName)
 	}
-
-	// Find the config file path from the already-parsed flag value.
-	configPath := stringFieldForFlag(rv, fields, configFlagName)
 	if configPath == "" {
-		return nil
+		rv := reflect.ValueOf(handler)
+		if rv.Kind() == reflect.Ptr {
+			rv = rv.Elem()
+		}
+		configPath = stringFieldForFlag(rv, handlerFields, configFlagName)
+	}
+	if configPath == "" {
+		return "", nil
 	}
 
 	explicit := fs.IsSet(configFlagName)
@@ -56,43 +71,37 @@ func loadConfigIntoHandler(handler Runnable, fs *FlagSet, configFlagName string,
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) && !explicit {
-			return nil
+			return "", nil
 		}
-		return fmt.Errorf("reading config file %q: %w", configPath, err)
+		return "", fmt.Errorf("reading config file %q: %w", configPath, err)
 	}
 
-	// Process via loader (hujson standardisation).
+	// Process via loader (hujson standardisation + env var replacement).
 	var raw json.RawMessage
 	if err := loader.LoadConfig(data, &raw); err != nil {
-		return fmt.Errorf("parsing config file %q: %w", configPath, err)
+		return "", fmt.Errorf("parsing config file %q: %w", configPath, err)
 	}
 
-	// Apply env-var substitution on the raw JSON bytes. loader.LoadConfig
-	// performs reflection-based replacement on structs, but json.RawMessage
-	// is opaque to that pass, so we apply the regex replacement ourselves.
-	rawStr := string(replaceEnvInJSON(raw))
+	return string(replaceEnvInJSON(raw)), nil
+}
+
+// applyConfigTags applies config:"key" struct tags on the handler.
+func applyConfigTags(handler Runnable, fs *FlagSet, fields []fieldInfo, rawJSON string) error {
+	rv := reflect.ValueOf(handler)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
 
 	for _, fi := range fields {
 		if fi.configKey == "" {
 			continue
 		}
-
 		// Don't override fields explicitly set by CLI flags
 		if fi.flagLong != "" && fs.IsSet(fi.flagLong) {
 			continue
 		}
 
-		var section string
-		if fi.configKey == "." {
-			section = rawStr
-		} else {
-			result := gjson.Get(rawStr, fi.configKey)
-			if !result.Exists() {
-				continue
-			}
-			section = result.Raw
-		}
-
+		section := extractSection(rawJSON, fi.configKey)
 		if section == "" {
 			continue
 		}
@@ -102,8 +111,33 @@ func loadConfigIntoHandler(handler Runnable, fs *FlagSet, configFlagName string,
 			return fmt.Errorf("config key %q: %w", fi.configKey, err)
 		}
 	}
-
 	return nil
+}
+
+// applyConfigBindings applies ConfigAt bindings.
+func applyConfigBindings(bindings []configBinding, rawJSON string) error {
+	for _, b := range bindings {
+		section := extractSection(rawJSON, b.key)
+		if section == "" {
+			continue
+		}
+		if err := sgjson.Unmarshal([]byte(section), b.dst); err != nil {
+			return fmt.Errorf("config key %q: %w", b.key, err)
+		}
+	}
+	return nil
+}
+
+// extractSection extracts a JSON section by key path.
+func extractSection(rawJSON, key string) string {
+	if key == "." {
+		return rawJSON
+	}
+	result := gjson.Get(rawJSON, key)
+	if !result.Exists() {
+		return ""
+	}
+	return result.Raw
 }
 
 // stringFieldForFlag returns the current string value of the flag's struct field.

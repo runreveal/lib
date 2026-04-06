@@ -125,6 +125,44 @@ func buildFlagSet(handler Runnable) (*FlagSet, []fieldInfo, error) {
 	return fs, fields, nil
 }
 
+// addGlobalsToFlagSet scans a globals struct pointer and adds its cli-tagged
+// fields to the given FlagSet. Returns the scanned fields for default application.
+func addGlobalsToFlagSet(fs *FlagSet, globals any) ([]fieldInfo, error) {
+	rv := reflect.ValueOf(globals)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
+		return nil, fmt.Errorf("globals must be a pointer to a struct")
+	}
+	rv = rv.Elem()
+
+	fields, err := scanFields(rv.Type())
+	if err != nil {
+		return nil, err
+	}
+
+	for _, fi := range fields {
+		if fi.flagLong == "" {
+			continue
+		}
+		// Skip if handler already defines this flag (handler wins).
+		if _, exists := fs.byLong[fi.flagLong]; exists {
+			continue
+		}
+
+		fieldVal := fieldByIndex(rv, fi.fieldIndex)
+		ptr := fieldVal.Addr().Interface()
+
+		def, err := makeFlagDef(fi.flagLong, fi.flagShort, fi.usage, fi.defVal, ptr)
+		if err != nil {
+			return nil, fmt.Errorf("globals field %v: %w", fi.fieldIndex, err)
+		}
+		if err := fs.add(def); err != nil {
+			return nil, err
+		}
+	}
+
+	return fields, nil
+}
+
 // applyDefaults sets the default values using pre-scanned fields.
 func applyDefaults(fs *FlagSet, fields []fieldInfo) error {
 	for _, fi := range fields {
