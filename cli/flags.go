@@ -209,9 +209,9 @@ func (fs *FlagSet) parseShort(raw string, remaining []string) (int, error) {
 // ptr must be a pointer to the field value.
 func makeFlagDef(long, short, usage, defVal string, ptr any) (*flagDef, error) {
 	def := &flagDef{
-		long:  long,
-		short: short,
-		usage: usage,
+		long:   long,
+		short:  short,
+		usage:  usage,
 		defVal: defVal,
 	}
 

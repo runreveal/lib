@@ -13,14 +13,14 @@ import (
 // Globals are shared flags embedded into every command.
 type Globals struct {
 	Verbose bool   `cli:"verbose,v" usage:"enable verbose output"`
-	Config  string `cli:"config,c"  usage:"config file path" default:"config.json"`
+	Config  string `cli:"config,c"  usage:"config file path"      default:"config.json"`
 }
 
 // ServeCmd is the handler for the "serve" subcommand.
 type ServeCmd struct {
 	Globals
-	Addr    string        `cli:"addr,a"    usage:"listen address"     default:":8080"`
-	Timeout time.Duration `cli:"timeout,t" usage:"request timeout"    default:"30s"`
+	Addr    string        `cli:"addr,a"    usage:"listen address"  default:":8080"`
+	Timeout time.Duration `cli:"timeout,t" usage:"request timeout" default:"30s"`
 
 	// DB is loaded from the config file's "database" section.
 	DB DBConfig `config:"database"`
@@ -53,7 +53,7 @@ func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 type MigrateCmd struct {
 	Globals
 	DryRun bool   `cli:"dry-run" usage:"print migrations without running"`
-	DB     string `cli:"db"      usage:"database name" default:"prod"`
+	DB     string `cli:"db"      usage:"database name"                    default:"prod"`
 }
 
 func (m *MigrateCmd) Run(ctx context.Context, args []string) error {

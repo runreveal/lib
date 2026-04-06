@@ -18,7 +18,7 @@ import (
 
 type echoCmd struct {
 	Message string `cli:"message,m" usage:"message to echo" default:"hello"`
-	Count   int    `cli:"count,n"   usage:"number of times"  default:"1"`
+	Count   int    `cli:"count,n"   usage:"number of times" default:"1"`
 }
 
 func (e *echoCmd) Run(_ context.Context, _ []string) error { return nil }
@@ -200,7 +200,7 @@ func TestFlagParsing_Defaults(t *testing.T) {
 
 type embeddedGlobals struct {
 	Verbose bool   `cli:"verbose,v" usage:"verbose mode"`
-	Config  string `cli:"config,c"  usage:"config file" default:"config.json"`
+	Config  string `cli:"config,c"  usage:"config file"  default:"config.json"`
 }
 
 type embeddedCmd struct {
@@ -548,7 +548,7 @@ type dbSection struct {
 
 type configHandler struct {
 	ConfigFile string    `cli:"config,c" usage:"config file"`
-	DB         dbSection `config:"database"`
+	DB         dbSection `                                   config:"database"`
 }
 
 func (c *configHandler) Run(_ context.Context, _ []string) error { return nil }
@@ -584,7 +584,7 @@ func TestConfig_MissingFileSilent(t *testing.T) {
 
 type overrideableHandler struct {
 	ConfigFile string `cli:"config" usage:"config file"`
-	Host       string `cli:"host"   usage:"host" default:"flag-default" config:"host"`
+	Host       string `cli:"host"   usage:"host"        default:"flag-default" config:"host"`
 }
 
 func (o *overrideableHandler) Run(_ context.Context, _ []string) error { return nil }
@@ -621,7 +621,7 @@ type nestedVal struct {
 }
 type nestedConfigHandler struct {
 	ConfigFile string    `cli:"config" usage:"config file"`
-	Nested     nestedVal `config:"a.b"`
+	Nested     nestedVal `                                 config:"a.b"`
 }
 
 func (n *nestedConfigHandler) Run(_ context.Context, _ []string) error { return nil }
@@ -651,7 +651,7 @@ type rootSection struct {
 }
 type rootConfigHandler struct {
 	ConfigFile string      `cli:"config" usage:"config file"`
-	All        rootSection `config:"."`
+	All        rootSection `                                 config:"."`
 }
 
 func (r *rootConfigHandler) Run(_ context.Context, _ []string) error { return nil }
