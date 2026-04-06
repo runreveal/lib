@@ -39,6 +39,14 @@ type Validator interface {
 	Validate() error
 }
 
+// HelpExtra is optionally implemented by command handlers to append
+// additional information to help output. Useful for showing available
+// loader types, config file schemas, or other context that the cli
+// framework can't derive from struct tags alone.
+type HelpExtra interface {
+	ExtraHelp() string
+}
+
 // ExitError carries a custom exit code.
 type ExitError struct {
 	Code int

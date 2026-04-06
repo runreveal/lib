@@ -7,6 +7,8 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
 
 	"github.com/runreveal/lib/cli"
 	"github.com/runreveal/lib/loader"
@@ -132,6 +134,63 @@ func (g *Globals) Validate() error {
 		return fmt.Errorf("at least one source is required")
 	}
 	return nil
+}
+
+// ExtraHelp implements cli.HelpExtra. It uses loader.List and
+// loader.Describe to show available types and their config fields,
+// bridging the cli and loader packages without either knowing
+// about the other.
+func (g *Globals) ExtraHelp() string {
+	var b strings.Builder
+	b.WriteString("\nAvailable source types:\n")
+	describeLoaderTypes[Source](&b)
+	b.WriteString("\nAvailable cache types:\n")
+	describeLoaderTypes[Cache](&b)
+	return b.String()
+}
+
+// describeLoaderTypes lists registered loader types for T with their
+// config fields (derived from JSON struct tags on the builder).
+func describeLoaderTypes[T any](b *strings.Builder) {
+	for _, name := range loader.List[T]() {
+		builder, ok := loader.Describe[T](name)
+		if !ok {
+			fmt.Fprintf(b, "  %s\n", name)
+			continue
+		}
+		fields := describeFields(builder)
+		if len(fields) == 0 {
+			fmt.Fprintf(b, "  %s\n", name)
+		} else {
+			fmt.Fprintf(b, "  %-12s %s\n", name, strings.Join(fields, ", "))
+		}
+	}
+}
+
+// describeFields reflects on a struct's JSON tags to produce
+// "name (type)" descriptions for each exported field, skipping "type".
+func describeFields(v any) []string {
+	t := reflect.TypeOf(v)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return nil
+	}
+	var out []string
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := f.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "type" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s (%s)", name, f.Type.Name()))
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------

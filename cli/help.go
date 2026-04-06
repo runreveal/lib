@@ -106,6 +106,16 @@ func printCommandHelp(w io.Writer, appName, path, desc string, handler Runnable,
 		fmt.Fprintf(w, "Flags:\n")
 	}
 	fmt.Fprintf(w, "  -h, --help   show help\n")
+
+	// Append extra help from handler and/or globals if they implement HelpExtra.
+	if he, ok := handler.(HelpExtra); ok {
+		fmt.Fprint(w, he.ExtraHelp())
+	}
+	if globals != nil {
+		if he, ok := globals.(HelpExtra); ok {
+			fmt.Fprint(w, he.ExtraHelp())
+		}
+	}
 }
 
 func printFlagDefs(w io.Writer, defs []*flagDef) {
