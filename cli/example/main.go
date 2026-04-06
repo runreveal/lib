@@ -187,14 +187,14 @@ func (w *WorkerCmd) Run(ctx context.Context, args []string) error {
 
 type MigrateCmd struct {
 	DryRun bool   `cli:"dry-run" usage:"print migrations without running"`
-	DB     string `cli:"db"      usage:"database name"                    default:"prod"`
+	Target string `cli:"target"  usage:"target database name"             default:"prod"`
 }
 
 func (m *MigrateCmd) Run(ctx context.Context, args []string) error {
 	if m.DryRun {
-		fmt.Printf("[dry-run] would migrate database: %s\n", m.DB)
+		fmt.Printf("[dry-run] would migrate database: %s\n", m.Target)
 	} else {
-		fmt.Printf("migrating database: %s\n", m.DB)
+		fmt.Printf("migrating database: %s\n", m.Target)
 	}
 	return nil
 }

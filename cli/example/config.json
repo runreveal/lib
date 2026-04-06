@@ -2,15 +2,18 @@
   // Example config for the CLI framework demo.
   // HuJSON: comments and trailing commas are allowed.
 
+  // Database connection settings, loaded into ServeCmd.DB via ConfigAt.
   "database": {
     "dsn": "postgres://localhost:5432/example?sslmode=disable",
   },
 
+  // Daemon mode address overrides, applied in DaemonCmd.Configure().
   "daemon": {
     "api_addr": ":8080",
     "metric_addr": ":9090",
   },
 
+  // Worker polling interval, applied in WorkerCmd.Configure().
   "worker": {
     "interval": "5s",
   },
