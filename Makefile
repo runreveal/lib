@@ -12,11 +12,10 @@ GO ?= $(shell which go)
 .PHONY: test
 test:
 	@for dir in $(SUBDIRS); do \
-		cd $$dir && \
+		(cd $$dir && \
 		$(GO) test -vet=off -tags='$(GOTAGS)' $(GOTESTFLAGS) -coverpkg="./..." -coverprofile=.coverprofile ./... && \
 		grep -v 'cmd' < .coverprofile > .covprof && mv .covprof .coverprofile && \
-		$(GO) tool cover -func=.coverprofile && \
-		cd .. ; \
+		$(GO) tool cover -func=.coverprofile) || exit 1; \
 	done
 
 .PHONY: coverage
@@ -35,9 +34,8 @@ version:
 .PHONY: lint
 lint: $(GOPATH)/bin/golangci-lint
 	@for dir in $(SUBDIRS); do \
-		cd $$dir && \
-		golangci-lint run --timeout 5m . && \
-		cd .. ; \
+		(cd $$dir && \
+		golangci-lint run --timeout 5m .) || exit 1; \
 	done
 
 $(GOPATH)/bin/golangci-lint:

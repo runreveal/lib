@@ -915,3 +915,437 @@ func TestConfig_EnvVarReplacement(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "env-replaced-host", handler.Host)
 }
+
+// --- Config precedence table-driven tests ---
+
+func TestConfig_Precedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		args       []string
+		wantHost   string
+	}{
+		{
+			name:       "flag overrides config",
+			configJSON: `{"host": "from-config"}`,
+			args:       []string{"run", "--config", "", "--host", "from-flag"},
+			wantHost:   "from-flag",
+		},
+		{
+			name:       "config overrides default",
+			configJSON: `{"host": "from-config"}`,
+			args:       []string{"run", "--config", ""},
+			wantHost:   "from-config",
+		},
+		{
+			name:       "default when no config and no flag",
+			configJSON: "",
+			args:       []string{"run"},
+			wantHost:   "flag-default",
+		},
+		{
+			name:       "config key missing uses default",
+			configJSON: `{"other": "value"}`,
+			args:       []string{"run", "--config", ""},
+			wantHost:   "flag-default",
+		},
+		{
+			name:       "empty config value overrides default",
+			configJSON: `{"host": ""}`,
+			args:       []string{"run", "--config", ""},
+			wantHost:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := &overrideableHandler{}
+			var buf bytes.Buffer
+			app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithConfigFlag("config"))
+			app.AddCommand(cli.Command("run", "run", handler))
+
+			args := make([]string, len(tt.args))
+			copy(args, tt.args)
+
+			if tt.configJSON != "" {
+				f := writeConfigFile(t, tt.configJSON)
+				for i, a := range args {
+					if a == "" && i > 0 && args[i-1] == "--config" {
+						args[i] = f
+					}
+				}
+			}
+
+			code := app.Run(context.Background(), args)
+			assert.Equal(t, 0, code, "output: %s", buf.String())
+			assert.Equal(t, tt.wantHost, handler.Host)
+		})
+	}
+}
+
+// --- Config with globals: config tag on globals struct ---
+
+type globalsWithConfig struct {
+	Config  string `cli:"config,c" usage:"config" default:"config.json"`
+	AppName string `                                                    config:"app_name"`
+}
+
+type plainCmd struct {
+	ran bool
+}
+
+func (p *plainCmd) Run(_ context.Context, _ []string) error {
+	p.ran = true
+	return nil
+}
+
+func TestConfig_GlobalsConfigTag(t *testing.T) {
+	g := &globalsWithConfig{}
+	cmd := &plainCmd{}
+	f := writeConfigFile(t, `{"app_name": "loaded-from-config"}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithGlobals(g),
+		cli.WithConfigFlag("config"),
+	)
+	app.AddCommand(cli.Command("run", "run", cmd))
+
+	code := app.Run(context.Background(), []string{"run", "--config", f})
+	assert.Equal(t, 0, code)
+	assert.True(t, cmd.ran)
+	assert.Equal(t, "loaded-from-config", g.AppName)
+}
+
+// --- Flag parsing edge cases (table-driven) ---
+
+func TestFlagParsing_ShortFlagEdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantVerbose bool
+		wantDebug   bool
+		wantName    string
+	}{
+		{
+			name:        "combined bool shorts",
+			args:        []string{"-vd"},
+			wantVerbose: true,
+			wantDebug:   true,
+		},
+		{
+			name:        "combined bool + value: -vd is both bools",
+			args:        []string{"-vd", "--name", "x"},
+			wantVerbose: true,
+			wantDebug:   true,
+			wantName:    "x",
+		},
+		{
+			name:     "single short with value",
+			args:     []string{"-v", "--name", "alice"},
+			wantName: "alice", wantVerbose: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &boolCmd{}
+			var buf bytes.Buffer
+			app := cli.New("app", "test", cli.WithOutput(&buf))
+			app.AddCommand(cli.Command("run", "run", cmd))
+
+			code := app.Run(context.Background(), append([]string{"run"}, tt.args...))
+			assert.Equal(t, 0, code, "output: %s", buf.String())
+			assert.Equal(t, tt.wantVerbose, cmd.Verbose)
+			assert.Equal(t, tt.wantDebug, cmd.Debug)
+			assert.Equal(t, tt.wantName, cmd.Name)
+		})
+	}
+}
+
+// --- Type coverage for makeFlagDef ---
+
+type moreTypesCmd struct {
+	PStr *string        `cli:"pstr" usage:"ptr string"`
+	PInt *int           `cli:"pint" usage:"ptr int"`
+	PDur *time.Duration `cli:"pdur" usage:"ptr duration"`
+	PFlt *float64       `cli:"pflt" usage:"ptr float"`
+	PU64 *uint64        `cli:"pu64" usage:"ptr uint64"`
+	PBol *bool          `cli:"pbol" usage:"ptr bool"`
+}
+
+func (m *moreTypesCmd) Run(_ context.Context, _ []string) error { return nil }
+
+func TestFlagParsing_PointerTypes(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		check func(t *testing.T, cmd *moreTypesCmd)
+	}{
+		{
+			name: "ptr string set",
+			args: []string{"--pstr", "hello"},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				require.NotNil(t, cmd.PStr)
+				assert.Equal(t, "hello", *cmd.PStr)
+			},
+		},
+		{
+			name: "ptr int set",
+			args: []string{"--pint", "42"},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				require.NotNil(t, cmd.PInt)
+				assert.Equal(t, 42, *cmd.PInt)
+			},
+		},
+		{
+			name: "ptr duration set",
+			args: []string{"--pdur", "5s"},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				require.NotNil(t, cmd.PDur)
+				assert.Equal(t, 5*time.Second, *cmd.PDur)
+			},
+		},
+		{
+			name: "ptr float set",
+			args: []string{"--pflt", "3.14"},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				require.NotNil(t, cmd.PFlt)
+				assert.InDelta(t, 3.14, *cmd.PFlt, 0.001)
+			},
+		},
+		{
+			name: "ptr uint64 set",
+			args: []string{"--pu64", "99"},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				require.NotNil(t, cmd.PU64)
+				assert.Equal(t, uint64(99), *cmd.PU64)
+			},
+		},
+		{
+			name: "ptr bool set",
+			args: []string{"--pbol"},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				require.NotNil(t, cmd.PBol)
+				assert.True(t, *cmd.PBol)
+			},
+		},
+		{
+			name: "unset ptrs remain nil",
+			args: []string{},
+			check: func(t *testing.T, cmd *moreTypesCmd) {
+				assert.Nil(t, cmd.PStr)
+				assert.Nil(t, cmd.PInt)
+				assert.Nil(t, cmd.PDur)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &moreTypesCmd{}
+			var buf bytes.Buffer
+			app := cli.New("app", "test", cli.WithOutput(&buf))
+			app.AddCommand(cli.Command("run", "run", cmd))
+
+			code := app.Run(context.Background(), append([]string{"run"}, tt.args...))
+			assert.Equal(t, 0, code, "output: %s", buf.String())
+			tt.check(t, cmd)
+		})
+	}
+}
+
+// --- DumpConfig, DefaultConfig, ExitError ---
+
+func TestDumpConfig(t *testing.T) {
+	cmd := &echoCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("echo", "echo", cmd))
+
+	app.Run(context.Background(), []string{"echo", "--message", "hi"})
+	m := cli.DumpConfig(cmd)
+	require.NotNil(t, m)
+	assert.Equal(t, "hi", m["message"])
+	assert.Equal(t, 1, m["count"]) // default
+}
+
+func TestDefaultConfig(t *testing.T) {
+	data := []byte(`{"key": "value"}`)
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithDefaultConfig(data),
+	)
+
+	code := app.Run(context.Background(), []string{"defcon"})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, string(data), buf.String())
+}
+
+func TestDefaultConfig_CustomCommand(t *testing.T) {
+	data := []byte(`{"x": 1}`)
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithDefaultConfig(data),
+		cli.WithDefaultConfigCommand("dump"),
+	)
+
+	code := app.Run(context.Background(), []string{"dump"})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, string(data), buf.String())
+}
+
+func TestDefaultConfig_NotRegistered(t *testing.T) {
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+
+	code := app.Run(context.Background(), []string{"defcon"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "no default config")
+}
+
+func TestExitError(t *testing.T) {
+	e := &cli.ExitError{Code: 3, Err: errors.New("boom")}
+	assert.Equal(t, "boom", e.Error())
+	assert.Equal(t, "boom", e.Unwrap().Error())
+
+	e2 := &cli.ExitError{Code: 5}
+	assert.Contains(t, e2.Error(), "exit code 5")
+	assert.Nil(t, e2.Unwrap())
+}
+
+// --- Config file error paths ---
+
+func TestConfig_ExplicitMissingFileErrors(t *testing.T) {
+	handler := &configHandler{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithConfigFlag("config"))
+	app.AddCommand(cli.Command("run", "run", handler))
+
+	// Explicitly passing a non-existent file should error
+	code := app.Run(context.Background(), []string{"run", "--config", "/nonexistent/config.json"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "reading config file")
+}
+
+func TestConfig_InvalidJSON(t *testing.T) {
+	handler := &configHandler{}
+	f := writeConfigFile(t, `{not valid json`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithConfigFlag("config"))
+	app.AddCommand(cli.Command("run", "run", handler))
+
+	code := app.Run(context.Background(), []string{"run", "--config", f})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "parsing config file")
+}
+
+// --- MinArgs coverage ---
+
+func TestEdge_ArgsValidation_MinArgs(t *testing.T) {
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("run", "run", &noopCmd{}, cli.WithArgs(cli.MinArgs(2))))
+
+	code := app.Run(context.Background(), []string{"run", "a", "b"})
+	assert.Equal(t, 0, code)
+
+	code = app.Run(context.Background(), []string{"run", "a"})
+	assert.Equal(t, 1, code)
+}
+
+// --- Handler Configure error ---
+
+type failConfigureCmd struct{}
+
+func (f *failConfigureCmd) Configure() error                        { return errors.New("configure failed") }
+func (f *failConfigureCmd) Run(_ context.Context, _ []string) error { return nil }
+
+func TestHandler_ConfigureError(t *testing.T) {
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("run", "run", &failConfigureCmd{}))
+
+	code := app.Run(context.Background(), []string{"run"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "configure")
+}
+
+// --- Globals Configure/Validate errors ---
+
+type failGlobalsConfigure struct {
+	Config string `cli:"config,c" default:"config.json"`
+}
+
+func (f *failGlobalsConfigure) Configure() error {
+	return errors.New("globals configure boom")
+}
+
+func TestGlobals_ConfigureError(t *testing.T) {
+	g := &failGlobalsConfigure{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(cli.Command("run", "run", &noopCmd{}))
+
+	code := app.Run(context.Background(), []string{"run"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "globals configure")
+}
+
+type failGlobalsValidate struct {
+	Config string `cli:"config,c" default:"config.json"`
+}
+
+func (f *failGlobalsValidate) Validate() error {
+	return errors.New("globals validate boom")
+}
+
+func TestGlobals_ValidateError(t *testing.T) {
+	g := &failGlobalsValidate{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(cli.Command("run", "run", &noopCmd{}))
+
+	code := app.Run(context.Background(), []string{"run"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "globals validate")
+}
+
+// --- Long flag edge cases ---
+
+func TestFlagParsing_LongBoolWithEquals(t *testing.T) {
+	cmd := &boolCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("run", "run", cmd))
+
+	code := app.Run(context.Background(), []string{"run", "--verbose=true"})
+	assert.Equal(t, 0, code)
+	assert.True(t, cmd.Verbose)
+}
+
+func TestFlagParsing_LongFlagMissingValue(t *testing.T) {
+	cmd := &echoCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("echo", "echo", cmd))
+
+	code := app.Run(context.Background(), []string{"echo", "--message"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "requires a value")
+}
+
+func TestFlagParsing_ShortFlagMissingValue(t *testing.T) {
+	cmd := &echoCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("echo", "echo", cmd))
+
+	code := app.Run(context.Background(), []string{"echo", "-m"})
+	assert.Equal(t, 1, code)
+	assert.Contains(t, buf.String(), "requires a value")
+}

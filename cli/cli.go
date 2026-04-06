@@ -465,7 +465,10 @@ func (a *App) handleDefaultConfig() int {
 		fmt.Fprintf(a.output, "no default config registered\n")
 		return 1
 	}
-	a.output.Write(a.defaultConfig)
+	if _, err := a.output.Write(a.defaultConfig); err != nil {
+		fmt.Fprintf(a.output, "error writing config: %s\n", err)
+		return 1
+	}
 	return 0
 }
 
