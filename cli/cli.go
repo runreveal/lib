@@ -32,7 +32,15 @@ type Runnable interface {
 	Run(ctx context.Context, args []string) error
 }
 
-// Validator is optionally implemented by handlers to validate config after loading.
+// Configurer is optionally implemented by globals or handler structs.
+// Called after config file loading to initialize resources (e.g. open
+// database connections, create clients).
+type Configurer interface {
+	Configure() error
+}
+
+// Validator is optionally implemented by globals or handler structs.
+// Called after Configure to check that the fully-loaded config is valid.
 type Validator interface {
 	Validate() error
 }
@@ -358,6 +366,12 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 			return 1, fmt.Errorf("loading config: %w", err)
 		}
 		if configJSON != "" {
+			// Apply config tags on globals
+			if a.globals != nil {
+				if err := applyConfigTags(a.globals, fs, globalFields, configJSON); err != nil {
+					return 1, fmt.Errorf("loading config: %w", err)
+				}
+			}
 			// Apply config:"key" struct tags on handler
 			if err := applyConfigTags(handler, fs, fields, configJSON); err != nil {
 				return 1, fmt.Errorf("loading config: %w", err)
@@ -369,7 +383,30 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 		}
 	}
 
-	// Validate
+	// CVR lifecycle on globals: Configure → Validate
+	if a.globals != nil {
+		if c, ok := a.globals.(Configurer); ok {
+			if err := c.Configure(); err != nil {
+				return 1, fmt.Errorf("globals configure: %w", err)
+			}
+		}
+		if v, ok := a.globals.(Validator); ok {
+			if err := v.Validate(); err != nil {
+				return 1, fmt.Errorf("globals validate: %w", err)
+			}
+		}
+		// Defer cleanup if globals implements io.Closer
+		if cl, ok := a.globals.(io.Closer); ok {
+			defer cl.Close()
+		}
+	}
+
+	// CVR lifecycle on handler: Configure → Validate
+	if c, ok := handler.(Configurer); ok {
+		if err := c.Configure(); err != nil {
+			return 1, err
+		}
+	}
 	if v, ok := handler.(Validator); ok {
 		if err := v.Validate(); err != nil {
 			return 1, err

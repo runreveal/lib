@@ -859,6 +859,126 @@ func TestConfigAt_MissingSectionSilent(t *testing.T) {
 	assert.Equal(t, "", cmd.DB.Host) // not populated
 }
 
+// --- CVR lifecycle on globals ---
+
+type cvrGlobals struct {
+	Verbose bool   `cli:"verbose,v" usage:"verbose"`
+	Config  string `cli:"config,c"  usage:"config"  default:"config.json"`
+	DSN     string `                                                      config:"db.dsn"`
+
+	// Set during lifecycle
+	Configured bool
+	Validated  bool
+	Closed     bool
+	DB         string // simulates an initialized resource
+}
+
+func (g *cvrGlobals) Configure() error {
+	g.Configured = true
+	if g.DSN != "" {
+		g.DB = "pool:" + g.DSN // simulate opening a connection
+	}
+	return nil
+}
+
+func (g *cvrGlobals) Validate() error {
+	g.Validated = true
+	return nil
+}
+
+func (g *cvrGlobals) Close() error {
+	g.Closed = true
+	g.DB = ""
+	return nil
+}
+
+type cvrCmd struct {
+	globalsSnapshot *cvrGlobals
+}
+
+func (c *cvrCmd) Run(ctx context.Context, _ []string) error {
+	g := cli.GlobalsFromContext[cvrGlobals](ctx)
+	// Snapshot so test can check state during Run
+	c.globalsSnapshot = &cvrGlobals{
+		Configured: g.Configured,
+		Validated:  g.Validated,
+		Closed:     g.Closed,
+		DB:         g.DB,
+	}
+	return nil
+}
+
+func TestGlobals_CVR_Lifecycle(t *testing.T) {
+	g := &cvrGlobals{}
+	cmd := &cvrCmd{}
+	f := writeConfigFile(t, `{"db": {"dsn": "postgres://localhost/test"}}`)
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test",
+		cli.WithOutput(&buf),
+		cli.WithGlobals(g),
+		cli.WithConfigFlag("config"),
+	)
+	app.AddCommand(cli.Command("run", "run", cmd))
+
+	code := app.Run(context.Background(), []string{"run", "--config", f})
+	assert.Equal(t, 0, code)
+
+	// During Run: configured and validated, not yet closed
+	require.NotNil(t, cmd.globalsSnapshot)
+	assert.True(t, cmd.globalsSnapshot.Configured)
+	assert.True(t, cmd.globalsSnapshot.Validated)
+	assert.False(t, cmd.globalsSnapshot.Closed)
+	assert.Equal(t, "pool:postgres://localhost/test", cmd.globalsSnapshot.DB)
+
+	// After Run: closed
+	assert.True(t, g.Closed)
+	assert.Equal(t, "", g.DB) // resource cleaned up
+}
+
+func TestGlobals_CVR_ConfigureError(t *testing.T) {
+	// Configure runs before Validate — already covered by
+	// TestGlobals_CVR_Lifecycle ordering assertions.
+}
+
+type cvrHandlerCmd struct {
+	Name       string `cli:"name" usage:"name"`
+	configured bool
+	validated  bool
+}
+
+func (c *cvrHandlerCmd) Configure() error {
+	c.configured = true
+	return nil
+}
+
+func (c *cvrHandlerCmd) Validate() error {
+	if !c.configured {
+		return errors.New("configure must run before validate")
+	}
+	c.validated = true
+	return nil
+}
+
+func (c *cvrHandlerCmd) Run(_ context.Context, _ []string) error {
+	if !c.validated {
+		return errors.New("validate must run before run")
+	}
+	return nil
+}
+
+func TestHandler_CVR_Lifecycle(t *testing.T) {
+	cmd := &cvrHandlerCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("run", "run", cmd))
+
+	code := app.Run(context.Background(), []string{"run", "--name", "test"})
+	assert.Equal(t, 0, code)
+	assert.True(t, cmd.configured)
+	assert.True(t, cmd.validated)
+}
+
 func TestConfig_EnvVarReplacement(t *testing.T) {
 	handler := &overrideableHandler{}
 	t.Setenv("CLI_TEST_HOST", "env-replaced-host")

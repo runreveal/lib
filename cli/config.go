@@ -85,9 +85,9 @@ func resolveConfigJSON(
 	return string(replaceEnvInJSON(raw)), nil
 }
 
-// applyConfigTags applies config:"key" struct tags on the handler.
-func applyConfigTags(handler Runnable, fs *FlagSet, fields []fieldInfo, rawJSON string) error {
-	rv := reflect.ValueOf(handler)
+// applyConfigTags applies config:"key" struct tags on a struct pointer.
+func applyConfigTags(target any, fs *FlagSet, fields []fieldInfo, rawJSON string) error {
+	rv := reflect.ValueOf(target)
 	if rv.Kind() == reflect.Ptr {
 		rv = rv.Elem()
 	}
