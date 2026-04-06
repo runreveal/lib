@@ -124,6 +124,8 @@ func Command(name, desc string, handler Runnable, opts ...any) Node {
 			children = append(children, v)
 		case CmdOption:
 			v(&o)
+		default:
+			panic(fmt.Sprintf("cli.Command %q: unsupported option type %T", name, v))
 		}
 	}
 	return &commandNode{name: name, desc: desc, handler: handler, children: children, opts: o}
@@ -244,7 +246,7 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 	if code, handled := a.handleCompletion(args); handled {
 		return code, nil
 	}
-	if dc := a.defconCmd(); len(args) == 1 && args[0] == dc {
+	if dc := a.defconCmd(); dc != "" && len(args) >= 1 && args[0] == dc {
 		return a.handleDefaultConfig(), nil
 	}
 

@@ -33,6 +33,8 @@ func scanFieldsWithIndex(t reflect.Type, prefix []int) ([]fieldInfo, error) {
 	var fields []fieldInfo
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
+		// Copy prefix into a new slice before appending i to avoid
+		// aliasing the backing array across loop iterations.
 		idx := append(append([]int{}, prefix...), i)
 
 		// Handle embedded structs (anonymous fields)
