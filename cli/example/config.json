@@ -1,0 +1,13 @@
+{
+  // Example config for the CLI framework demo.
+  // HuJSON: comments and trailing commas are allowed.
+
+  "sources": [
+    {"type": "webhook", "path": "/hooks/github"},
+    {"type": "syslog", "addr": ":514"},
+  ],
+
+  "cache": {"type": "memory", "max_size": 1000},
+
+  "server": {"addr": ":8080"},
+}

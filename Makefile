@@ -7,16 +7,15 @@ GOTAGS = testing
 
 GO ?= $(shell which go)
 
-export GOEXPERIMENT=nocoverageredesign
+# GOEXPERIMENT=nocoverageredesign was removed in Go 1.25
 
 .PHONY: test
 test:
 	@for dir in $(SUBDIRS); do \
-		cd $$dir && \
+		(cd $$dir && \
 		$(GO) test -vet=off -tags='$(GOTAGS)' $(GOTESTFLAGS) -coverpkg="./..." -coverprofile=.coverprofile ./... && \
 		grep -v 'cmd' < .coverprofile > .covprof && mv .covprof .coverprofile && \
-		$(GO) tool cover -func=.coverprofile && \
-		cd .. ; \
+		$(GO) tool cover -func=.coverprofile) || exit 1; \
 	done
 
 .PHONY: coverage
@@ -35,13 +34,12 @@ version:
 .PHONY: lint
 lint: $(GOPATH)/bin/golangci-lint
 	@for dir in $(SUBDIRS); do \
-		cd $$dir && \
-		golangci-lint run --timeout 5m . && \
-		cd .. ; \
+		(cd $$dir && \
+		golangci-lint run --timeout 5m .) || exit 1; \
 	done
 
 $(GOPATH)/bin/golangci-lint:
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.51.2
+	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 
 $(GOPATH)/bin/golines:
 	$(GO) install github.com/segmentio/golines@latest

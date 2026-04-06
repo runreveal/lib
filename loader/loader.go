@@ -6,6 +6,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"sync"
 
 	"github.com/segmentio/encoding/json"
@@ -81,6 +82,60 @@ func Register[T any](name string, factory func() Builder[T]) {
 	}
 	registryForType := typReg.(*Registry[T])
 	registryForType.m[name] = factory
+}
+
+// List returns the sorted names of all registered implementations for type T.
+func List[T any]() []string {
+	typ := new(T)
+	typStr := reflect.TypeOf(typ).String()
+
+	registry.RLock()
+	defer registry.RUnlock()
+
+	raw, ok := registry.m[typStr]
+	if !ok {
+		return nil
+	}
+	reg := raw.(*Registry[T])
+	reg.RLock()
+	defer reg.RUnlock()
+
+	names := make([]string, 0, len(reg.m))
+	for name := range reg.m {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Describe returns a zero-value Builder for the named type, useful for
+// introspecting config fields (e.g. reflecting on JSON struct tags for
+// help output). Returns nil, false if the name is not registered.
+func Describe[T any](name string) (Builder[T], bool) {
+	typ := new(T)
+	typStr := reflect.TypeOf(typ).String()
+
+	registry.RLock()
+	raw, ok := registry.m[typStr]
+	registry.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	reg := raw.(*Registry[T])
+	reg.RLock()
+	factory, ok := reg.m[name]
+	reg.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	return factory(), true
+}
+
+// Helper is optionally implemented by Builder types to provide a
+// human-readable description of their configuration. Used by CLI
+// tools to show available config options in help output.
+type Helper interface {
+	Help() string
 }
 
 // Loader is a struct which can dyanmically unmarshal any type T
