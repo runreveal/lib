@@ -84,43 +84,47 @@ type MemoryCache struct{ maxSize int }
 func (m *MemoryCache) Name() string { return fmt.Sprintf("memory(max=%d)", m.maxSize) }
 
 // ---------------------------------------------------------------------------
-// AppConfig: loaded from config.json via config:"." on Globals
+// ServerConfig: plain struct loaded from config file
 // ---------------------------------------------------------------------------
-
-type AppConfig struct {
-	Sources []loader.Loader[Source] `json:"sources"`
-	Cache   loader.Loader[Cache]    `json:"cache"`
-	Server  ServerConfig            `json:"server"`
-}
 
 type ServerConfig struct {
 	Addr string `json:"addr"`
 }
 
 // ---------------------------------------------------------------------------
-// Globals: shared flags + config + initialized resources
+// Globals: shared flags + config fields loaded directly from config file
 // ---------------------------------------------------------------------------
 
+// Globals holds CLI flags, config-file-driven fields, and initialized
+// resources. Config fields use config:"key" tags to pull their section
+// from the config file — no wrapper struct needed.
 type Globals struct {
-	Verbose bool      `cli:"verbose,v" usage:"enable verbose output"`
-	Config  string    `cli:"config,c"  usage:"config file path"      default:"config.json"`
-	Cfg     AppConfig `                                                                    config:"."`
+	// CLI flags
+	Verbose bool   `cli:"verbose,v" usage:"enable verbose output"`
+	Config  string `cli:"config,c"  usage:"config file path"      default:"config.json"`
 
-	// Initialized resources
+	// Config file sections — each field maps to a top-level key
+	Sources []loader.Loader[Source] `config:"sources"`
+	Cache   loader.Loader[Cache]    `config:"cache"`
+	Server  ServerConfig            `config:"server"`
+
+	// Initialized in Configure(), used by commands via GlobalsFromContext.
+	// These are runtime state, not config — but they live here because
+	// Globals is the natural singleton for the process.
 	sources []Source
 	cache   Cache
 }
 
 func (g *Globals) Configure() error {
-	for _, src := range g.Cfg.Sources {
+	for _, src := range g.Sources {
 		s, err := src.Configure()
 		if err != nil {
 			return fmt.Errorf("configuring source: %w", err)
 		}
 		g.sources = append(g.sources, s)
 	}
-	if g.Cfg.Cache.Builder != nil {
-		c, err := g.Cfg.Cache.Configure()
+	if g.Cache.Builder != nil {
+		c, err := g.Cache.Configure()
 		if err != nil {
 			return fmt.Errorf("configuring cache: %w", err)
 		}
@@ -201,18 +205,18 @@ type ServeCmd struct {
 	Addr string `cli:"addr,a" usage:"listen address"`
 }
 
-func (s *ServeCmd) Configure() error {
-	// Apply server config from file as default if --addr not set.
-	return nil
-}
-
 func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 	g := cli.GlobalsFromContext[Globals](ctx)
 	if g == nil {
 		return fmt.Errorf("globals not available")
 	}
 
-	fmt.Printf("server addr: %s\n", s.Addr)
+	addr := s.Addr
+	if addr == "" {
+		addr = g.Server.Addr
+	}
+
+	fmt.Printf("server addr: %s\n", addr)
 	fmt.Printf("sources:\n")
 	for _, src := range g.sources {
 		fmt.Printf("  - %s\n", src.Name())
@@ -247,7 +251,6 @@ func (l *ListSourcesCmd) Run(ctx context.Context, args []string) error {
 
 func main() {
 	globals := &Globals{}
-	serveCmd := &ServeCmd{}
 
 	app := cli.New("example", "Example CLI demonstrating cli + loader",
 		cli.WithVersion("1.0.0"),
@@ -257,7 +260,7 @@ func main() {
 	)
 
 	app.AddCommand(
-		cli.Command("serve", "Start the HTTP server", serveCmd),
+		cli.Command("serve", "Start the HTTP server", &ServeCmd{}),
 		cli.Command("list-sources", "List configured sources", &ListSourcesCmd{},
 			cli.WithArgs(cli.NoArgs),
 		),
