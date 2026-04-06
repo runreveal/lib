@@ -41,7 +41,7 @@ lint: $(GOPATH)/bin/golangci-lint
 	done
 
 $(GOPATH)/bin/golangci-lint:
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.51.2
+	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 
 $(GOPATH)/bin/golines:
 	$(GO) install github.com/segmentio/golines@latest
