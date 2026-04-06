@@ -188,16 +188,16 @@ func WithOutput(w io.Writer) AppOption {
 
 // App is the top-level CLI application.
 type App struct {
-	name          string
-	desc          string
-	version       string
-	configFlag    string
+	name             string
+	desc             string
+	version          string
+	configFlag       string
 	globals          any // pointer to globals struct, if set
 	defaultConfig    []byte
 	defaultConfigCmd string
 	middlewares      []Middleware
-	children      []Node
-	output        io.Writer
+	children         []Node
+	output           io.Writer
 }
 
 // New creates a new App.
