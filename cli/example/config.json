@@ -2,19 +2,12 @@
   // Example config for the CLI framework demo.
   // HuJSON: comments and trailing commas are allowed.
 
-  // Database connection settings, loaded into ServeCmd.DB via ConfigAt.
-  "database": {
-    "dsn": "postgres://localhost:5432/example?sslmode=disable",
-  },
+  "sources": [
+    {"type": "webhook", "path": "/hooks/github"},
+    {"type": "syslog", "addr": ":514"},
+  ],
 
-  // Daemon mode address overrides, applied in DaemonCmd.Configure().
-  "daemon": {
-    "api_addr": ":8080",
-    "metric_addr": ":9090",
-  },
+  "cache": {"type": "memory", "max_size": 1000},
 
-  // Worker polling interval, applied in WorkerCmd.Configure().
-  "worker": {
-    "interval": "5s",
-  },
+  "server": {"addr": ":8080"},
 }

@@ -3,12 +3,11 @@ module github.com/runreveal/lib/cli/example
 go 1.24
 
 require (
-	github.com/runreveal/lib/await v0.0.0-20231128193746-50c2ad68891c
 	github.com/runreveal/lib/cli v0.0.0
+	github.com/runreveal/lib/loader v0.0.0
 )
 
 require (
-	github.com/runreveal/lib/loader v0.0.0-20231128193746-50c2ad68891c // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.3.6 // indirect
 	github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a // indirect
@@ -19,3 +18,5 @@ require (
 )
 
 replace github.com/runreveal/lib/cli => ../
+
+replace github.com/runreveal/lib/loader => ../../loader

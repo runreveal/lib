@@ -1,200 +1,183 @@
-// Command example demonstrates the github.com/runreveal/lib/cli framework,
-// including await integration for long-running services and config file loading.
+// Command example demonstrates the github.com/runreveal/lib/cli framework
+// with github.com/runreveal/lib/loader for polymorphic config loading.
 package main
 
 import (
 	"context"
 	_ "embed"
 	"fmt"
-	"net/http"
 	"os"
-	"time"
 
-	"github.com/runreveal/lib/await"
 	"github.com/runreveal/lib/cli"
+	"github.com/runreveal/lib/loader"
 )
 
 //go:embed config.json
 var defaultConfig []byte
 
 // ---------------------------------------------------------------------------
-// Globals: shared flags + resources via Configure/Validate/Close
+// Source: an interface with multiple implementations loaded via loader
 // ---------------------------------------------------------------------------
 
-// Globals holds flags and resources shared across all commands.
-type Globals struct {
-	Verbose bool   `cli:"verbose,v" usage:"enable verbose output"`
-	Config  string `cli:"config,c"  usage:"config file path"      default:"config.json"`
+type Source interface {
+	Name() string
+}
+
+func init() {
+	loader.Register[Source]("webhook", func() loader.Builder[Source] { return &WebhookConfig{} })
+	loader.Register[Source]("syslog", func() loader.Builder[Source] { return &SyslogConfig{} })
+}
+
+// WebhookConfig is the config for a webhook source.
+type WebhookConfig struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
+}
+
+func (w *WebhookConfig) Configure() (Source, error) {
+	return &WebhookSource{path: w.Path}, nil
+}
+
+type WebhookSource struct{ path string }
+
+func (w *WebhookSource) Name() string { return "webhook:" + w.path }
+
+// SyslogConfig is the config for a syslog source.
+type SyslogConfig struct {
+	Type string `json:"type"`
+	Addr string `json:"addr"`
+}
+
+func (s *SyslogConfig) Configure() (Source, error) {
+	return &SyslogSource{addr: s.Addr}, nil
+}
+
+type SyslogSource struct{ addr string }
+
+func (s *SyslogSource) Name() string { return "syslog:" + s.addr }
+
+// ---------------------------------------------------------------------------
+// Cache: a single-value polymorphic config
+// ---------------------------------------------------------------------------
+
+type Cache interface {
+	Name() string
+}
+
+func init() {
+	loader.Register[Cache]("memory", func() loader.Builder[Cache] { return &MemoryCacheConfig{} })
+}
+
+type MemoryCacheConfig struct {
+	Type    string `json:"type"`
+	MaxSize int    `json:"max_size"`
+}
+
+func (m *MemoryCacheConfig) Configure() (Cache, error) {
+	return &MemoryCache{maxSize: m.MaxSize}, nil
+}
+
+type MemoryCache struct{ maxSize int }
+
+func (m *MemoryCache) Name() string { return fmt.Sprintf("memory(max=%d)", m.maxSize) }
+
+// ---------------------------------------------------------------------------
+// AppConfig: loaded from config.json via config:"." on Globals
+// ---------------------------------------------------------------------------
+
+type AppConfig struct {
+	Sources []loader.Loader[Source] `json:"sources"`
+	Cache   loader.Loader[Cache]    `json:"cache"`
+	Server  ServerConfig            `json:"server"`
+}
+
+type ServerConfig struct {
+	Addr string `json:"addr"`
 }
 
 // ---------------------------------------------------------------------------
-// serve: a long-running HTTP server managed by await
+// Globals: shared flags + config + initialized resources
+// ---------------------------------------------------------------------------
+
+type Globals struct {
+	Verbose bool      `cli:"verbose,v" usage:"enable verbose output"`
+	Config  string    `cli:"config,c"  usage:"config file path"      default:"config.json"`
+	Cfg     AppConfig `                                                                    config:"."`
+
+	// Initialized resources
+	sources []Source
+	cache   Cache
+}
+
+func (g *Globals) Configure() error {
+	for _, src := range g.Cfg.Sources {
+		s, err := src.Configure()
+		if err != nil {
+			return fmt.Errorf("configuring source: %w", err)
+		}
+		g.sources = append(g.sources, s)
+	}
+	if g.Cfg.Cache.Builder != nil {
+		c, err := g.Cfg.Cache.Configure()
+		if err != nil {
+			return fmt.Errorf("configuring cache: %w", err)
+		}
+		g.cache = c
+	}
+	return nil
+}
+
+func (g *Globals) Validate() error {
+	if len(g.sources) == 0 {
+		return fmt.Errorf("at least one source is required")
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// serve: uses initialized resources from Globals
 // ---------------------------------------------------------------------------
 
 type ServeCmd struct {
-	Addr    string        `cli:"addr,a"    usage:"listen address"  default:":8080"`
-	Timeout time.Duration `cli:"timeout,t" usage:"request timeout" default:"30s"`
-	DB      DBConfig
+	Addr string `cli:"addr,a" usage:"listen address"`
 }
 
-type DBConfig struct {
-	DSN string `json:"dsn"`
-}
-
-func (s *ServeCmd) Validate() error {
-	if s.Addr == "" {
-		return fmt.Errorf("--addr must not be empty")
-	}
+func (s *ServeCmd) Configure() error {
+	// Apply server config from file as default if --addr not set.
 	return nil
 }
 
-// Run starts the HTTP server using await for graceful shutdown.
-// The ctx passed by the cli framework is cancelled on SIGINT/SIGTERM
-// when the root command is run, but await.WithSignals gives you the
-// same behavior with named sub-runners and a configurable stop timeout.
 func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 	g := cli.GlobalsFromContext[Globals](ctx)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "ok")
-	})
-
-	server := &http.Server{
-		Addr:         s.Addr,
-		Handler:      mux,
-		ReadTimeout:  s.Timeout,
-		WriteTimeout: s.Timeout,
+	if g == nil {
+		return fmt.Errorf("globals not available")
 	}
 
-	if g != nil && g.Verbose {
-		fmt.Printf("starting server on %s\n", s.Addr)
-		if s.DB.DSN != "" {
-			fmt.Printf("database: %s\n", s.DB.DSN)
-		}
+	fmt.Printf("server addr: %s\n", s.Addr)
+	fmt.Printf("sources:\n")
+	for _, src := range g.sources {
+		fmt.Printf("  - %s\n", src.Name())
 	}
-
-	// await manages graceful shutdown: on SIGINT/SIGTERM it cancels
-	// the context, ListenAndServe calls server.Shutdown, and await
-	// waits up to the stop timeout for in-flight requests to drain.
-	w := await.New(await.WithSignals)
-	w.AddNamed(await.ListenAndServe(server), "http")
-	return w.Run(ctx)
-}
-
-// ---------------------------------------------------------------------------
-// daemon: run multiple services concurrently with await
-// ---------------------------------------------------------------------------
-
-type DaemonCmd struct {
-	APIAddr    string `cli:"api-addr"    usage:"API listen address"     default:":8080"`
-	MetricAddr string `cli:"metric-addr" usage:"metrics listen address" default:":9090"`
-	Cfg        DaemonConfig
-}
-
-type DaemonConfig struct {
-	APIAddr    string `json:"api_addr"`
-	MetricAddr string `json:"metric_addr"`
-}
-
-// Configure applies config file values as defaults for flags that
-// weren't explicitly set on the command line.
-func (d *DaemonCmd) Configure() error {
-	if d.Cfg.APIAddr != "" && d.APIAddr == ":8080" {
-		d.APIAddr = d.Cfg.APIAddr
-	}
-	if d.Cfg.MetricAddr != "" && d.MetricAddr == ":9090" {
-		d.MetricAddr = d.Cfg.MetricAddr
+	if g.cache != nil {
+		fmt.Printf("cache: %s\n", g.cache.Name())
 	}
 	return nil
 }
 
-func (d *DaemonCmd) Validate() error {
-	if d.APIAddr == "" || d.MetricAddr == "" {
-		return fmt.Errorf("both --api-addr and --metric-addr are required")
-	}
-	return nil
-}
-
-// Run starts multiple services under a single await runner.
-// If any service exits with an error, await cancels the others
-// and waits for them to shut down cleanly.
-func (d *DaemonCmd) Run(ctx context.Context, args []string) error {
-	apiServer := &http.Server{
-		Addr:    d.APIAddr,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "api") }),
-	}
-	metricServer := &http.Server{
-		Addr:    d.MetricAddr,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "metrics") }),
-	}
-
-	w := await.New(await.WithSignals, await.WithStopTimeout(15*time.Second))
-	w.AddNamed(await.ListenAndServe(apiServer), "api")
-	w.AddNamed(await.ListenAndServe(metricServer), "metrics")
-
-	fmt.Printf("daemon: api=%s metrics=%s\n", d.APIAddr, d.MetricAddr)
-	return w.Run(ctx)
-}
-
 // ---------------------------------------------------------------------------
-// worker: a background job that respects context cancellation
+// list-sources: shows configured sources
 // ---------------------------------------------------------------------------
 
-type WorkerCmd struct {
-	Interval time.Duration `cli:"interval,i" usage:"poll interval" default:"10s"`
-	Cfg      WorkerConfig
-}
+type ListSourcesCmd struct{}
 
-type WorkerConfig struct {
-	Interval string `json:"interval"`
-}
-
-// Configure applies config file values as defaults.
-func (w *WorkerCmd) Configure() error {
-	if w.Cfg.Interval != "" && w.Interval == 10*time.Second {
-		d, err := time.ParseDuration(w.Cfg.Interval)
-		if err != nil {
-			return fmt.Errorf("parsing worker interval: %w", err)
-		}
-		w.Interval = d
+func (l *ListSourcesCmd) Run(ctx context.Context, args []string) error {
+	g := cli.GlobalsFromContext[Globals](ctx)
+	if g == nil {
+		return fmt.Errorf("globals not available")
 	}
-	return nil
-}
 
-// Run demonstrates a polling worker that exits cleanly on SIGINT/SIGTERM.
-// For a single long-running goroutine, you don't need await — just
-// select on ctx.Done().
-func (w *WorkerCmd) Run(ctx context.Context, args []string) error {
-	fmt.Printf("worker: polling every %s\n", w.Interval)
-	ticker := time.NewTicker(w.Interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Println("worker: shutting down")
-			return nil
-		case <-ticker.C:
-			fmt.Println("worker: tick")
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// migrate: a one-shot command (no await needed)
-// ---------------------------------------------------------------------------
-
-type MigrateCmd struct {
-	DryRun bool   `cli:"dry-run" usage:"print migrations without running"`
-	Target string `cli:"target"  usage:"target database name"             default:"prod"`
-}
-
-func (m *MigrateCmd) Run(ctx context.Context, args []string) error {
-	if m.DryRun {
-		fmt.Printf("[dry-run] would migrate database: %s\n", m.Target)
-	} else {
-		fmt.Printf("migrating database: %s\n", m.Target)
+	for _, src := range g.sources {
+		fmt.Println(src.Name())
 	}
 	return nil
 }
@@ -206,10 +189,8 @@ func (m *MigrateCmd) Run(ctx context.Context, args []string) error {
 func main() {
 	globals := &Globals{}
 	serveCmd := &ServeCmd{}
-	daemonCmd := &DaemonCmd{}
-	workerCmd := &WorkerCmd{}
 
-	app := cli.New("example", "Example CLI demonstrating cli + await",
+	app := cli.New("example", "Example CLI demonstrating cli + loader",
 		cli.WithVersion("1.0.0"),
 		cli.WithGlobals(globals),
 		cli.WithConfigFlag("config"),
@@ -217,30 +198,9 @@ func main() {
 	)
 
 	app.AddCommand(
-		// Long-running server with await + graceful shutdown.
-		// DB config loaded from the "database" section of config.json.
-		cli.Command("serve", "Start the HTTP server", serveCmd,
-			cli.ConfigAt("database", &serveCmd.DB),
-		),
-
-		// Multiple services under one await runner.
-		// Addresses loaded from the "daemon" section of config.json,
-		// with CLI flags overriding config values via Configure().
-		cli.Command("daemon", "Run all services", daemonCmd,
-			cli.ConfigAt("daemon", &daemonCmd.Cfg),
-		),
-
-		// Background worker using context cancellation.
-		// Interval loaded from the "worker" section of config.json.
-		cli.Command("worker", "Run the background worker", workerCmd,
-			cli.ConfigAt("worker", &workerCmd.Cfg),
-		),
-
-		// One-shot commands don't need await or config.
-		cli.Group("admin", "Administrative commands",
-			cli.Command("migrate", "Run database migrations", &MigrateCmd{},
-				cli.WithArgs(cli.NoArgs),
-			),
+		cli.Command("serve", "Start the HTTP server", serveCmd),
+		cli.Command("list-sources", "List configured sources", &ListSourcesCmd{},
+			cli.WithArgs(cli.NoArgs),
 		),
 	)
 

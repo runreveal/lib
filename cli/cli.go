@@ -21,12 +21,6 @@ type flagSetKey struct{}
 // globalsKey is the context key used to carry the globals pointer during execution.
 type globalsKey struct{}
 
-// configBinding pairs a config file key with a destination pointer for ConfigAt.
-type configBinding struct {
-	key string
-	dst any
-}
-
 // Runnable is the core interface every command handler must implement.
 type Runnable interface {
 	Run(ctx context.Context, args []string) error
@@ -102,22 +96,12 @@ func (g *groupNode) isGroup() bool    { return true }
 type CmdOption func(*cmdOptions)
 
 type cmdOptions struct {
-	argsFunc       ArgsFunc
-	configBindings []configBinding
+	argsFunc ArgsFunc
 }
 
 // WithArgs sets an args validation function on a command.
 func WithArgs(f ArgsFunc) CmdOption {
 	return func(o *cmdOptions) { o.argsFunc = f }
-}
-
-// ConfigAt registers a config file section to be unmarshaled into dst.
-// key is a dot-separated path into the config file JSON (e.g. "serve", "common.db").
-// Use "." for the entire config root. dst must be a pointer.
-func ConfigAt(key string, dst any) CmdOption {
-	return func(o *cmdOptions) {
-		o.configBindings = append(o.configBindings, configBinding{key: key, dst: dst})
-	}
 }
 
 // Command creates a command node. Each element of opts may be a Node (child
@@ -403,10 +387,6 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 			}
 			// Apply config:"key" struct tags on handler
 			if err := applyConfigTags(handler, fs, fields, configJSON); err != nil {
-				return 1, fmt.Errorf("loading config: %w", err)
-			}
-			// Apply ConfigAt bindings
-			if err := applyConfigBindings(node.opts.configBindings, configJSON); err != nil {
 				return 1, fmt.Errorf("loading config: %w", err)
 			}
 		}

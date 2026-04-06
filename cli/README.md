@@ -111,19 +111,13 @@ The framework also calls `io.Closer` on globals after the command exits.
 
 ### Config File Loading
 
-One config file for the whole app. Commands declare which sections they need:
+One config file for the whole app. Commands declare which sections they need
+using `config:"key"` struct tags:
 
 ```go
-// Via struct tags:
 type ServeCmd struct {
     DB DBConfig `config:"database"`
 }
-
-// Or via ConfigAt at registration time:
-serveCmd := &ServeCmd{}
-cli.Command("serve", "Start server", serveCmd,
-    cli.ConfigAt("database", &serveCmd.DB),
-)
 ```
 
 Config files are processed through `loader.LoadConfig`, which supports HuJSON

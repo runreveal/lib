@@ -114,20 +114,6 @@ func applyConfigTags(target any, fs *FlagSet, fields []fieldInfo, rawJSON string
 	return nil
 }
 
-// applyConfigBindings applies ConfigAt bindings.
-func applyConfigBindings(bindings []configBinding, rawJSON string) error {
-	for _, b := range bindings {
-		section := extractSection(rawJSON, b.key)
-		if section == "" {
-			continue
-		}
-		if err := sgjson.Unmarshal([]byte(section), b.dst); err != nil {
-			return fmt.Errorf("config key %q: %w", b.key, err)
-		}
-	}
-	return nil
-}
-
 // extractSection extracts a JSON section by key path.
 func extractSection(rawJSON, key string) string {
 	if key == "." {
