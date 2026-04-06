@@ -91,7 +91,9 @@ func printCommandHelp(w io.Writer, appName, path, desc string, handler Runnable,
 	fs, _, err := buildFlagSet(handler)
 	if err == nil {
 		if globals != nil {
-			addGlobalsToFlagSet(fs, globals)
+			if _, gerr := addGlobalsToFlagSet(fs, globals); gerr != nil {
+				fmt.Fprintf(w, "  (error loading global flags: %s)\n", gerr)
+			}
 		}
 		if len(fs.defs) > 0 {
 			fmt.Fprintf(w, "Flags:\n")

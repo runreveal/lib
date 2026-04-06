@@ -166,7 +166,9 @@ func (a *App) completeFlags(
 		fs, _, err := buildFlagSet(cn.handler)
 		if err == nil {
 			if a.globals != nil {
-				addGlobalsToFlagSet(fs, a.globals)
+				if _, gerr := addGlobalsToFlagSet(fs, a.globals); gerr != nil {
+					return nil
+				}
 			}
 			defs = fs.defs
 		}
@@ -183,9 +185,7 @@ func (a *App) completeFlags(
 	// global flags.
 	if node == nil && a.globals != nil {
 		fs := newFlagSet()
-		gFields, err := addGlobalsToFlagSet(fs, a.globals)
-		if err == nil {
-			_ = gFields
+		if _, err := addGlobalsToFlagSet(fs, a.globals); err == nil {
 			defs = append(defs, fs.defs...)
 		}
 	}

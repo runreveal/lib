@@ -2,7 +2,10 @@ module github.com/runreveal/lib/cli/example
 
 go 1.24
 
-require github.com/runreveal/lib/cli v0.0.0
+require (
+	github.com/runreveal/lib/await v0.0.0-20231128193746-50c2ad68891c
+	github.com/runreveal/lib/cli v0.0.0
+)
 
 require (
 	github.com/runreveal/lib/loader v0.0.0-20231128193746-50c2ad68891c // indirect

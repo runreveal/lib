@@ -1,29 +1,36 @@
-// Command example demonstrates the github.com/runreveal/lib/cli framework.
+// Command example demonstrates the github.com/runreveal/lib/cli framework,
+// including await integration for long-running services.
 package main
 
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
+	"github.com/runreveal/lib/await"
 	"github.com/runreveal/lib/cli"
 )
 
-// Globals holds flags shared across all commands. Registered once with
-// WithGlobals — no need to embed in every command struct.
+// ---------------------------------------------------------------------------
+// Globals: shared flags + resources via Configure/Validate/Close
+// ---------------------------------------------------------------------------
+
+// Globals holds flags and resources shared across all commands.
 type Globals struct {
 	Verbose bool   `cli:"verbose,v" usage:"enable verbose output"`
 	Config  string `cli:"config,c"  usage:"config file path"      default:"config.json"`
 }
 
-// ServeCmd is the handler for the "serve" subcommand.
+// ---------------------------------------------------------------------------
+// serve: a long-running HTTP server managed by await
+// ---------------------------------------------------------------------------
+
 type ServeCmd struct {
 	Addr    string        `cli:"addr,a"    usage:"listen address"  default:":8080"`
 	Timeout time.Duration `cli:"timeout,t" usage:"request timeout" default:"30s"`
-
-	// DB is loaded from the config file's "database" section via ConfigAt.
-	DB DBConfig
+	DB      DBConfig
 }
 
 type DBConfig struct {
@@ -37,20 +44,108 @@ func (s *ServeCmd) Validate() error {
 	return nil
 }
 
+// Run starts the HTTP server using await for graceful shutdown.
+// The ctx passed by the cli framework is cancelled on SIGINT/SIGTERM
+// when the root command is run, but await.WithSignals gives you the
+// same behavior with named sub-runners and a configurable stop timeout.
 func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 	g := cli.GlobalsFromContext[Globals](ctx)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "ok")
+	})
+
+	server := &http.Server{
+		Addr:         s.Addr,
+		Handler:      mux,
+		ReadTimeout:  s.Timeout,
+		WriteTimeout: s.Timeout,
+	}
+
 	if g != nil && g.Verbose {
-		fmt.Printf("verbose mode enabled\n")
-		fmt.Printf("config file: %s\n", g.Config)
+		fmt.Printf("starting server on %s\n", s.Addr)
 		if s.DB.DSN != "" {
-			fmt.Printf("database DSN: %s\n", s.DB.DSN)
+			fmt.Printf("database: %s\n", s.DB.DSN)
 		}
 	}
-	fmt.Printf("serving on %s (timeout: %s)\n", s.Addr, s.Timeout)
+
+	// await manages graceful shutdown: on SIGINT/SIGTERM it cancels
+	// the context, ListenAndServe calls server.Shutdown, and await
+	// waits up to the stop timeout for in-flight requests to drain.
+	w := await.New(await.WithSignals)
+	w.AddNamed(await.ListenAndServe(server), "http")
+	return w.Run(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// daemon: run multiple services concurrently with await
+// ---------------------------------------------------------------------------
+
+type DaemonCmd struct {
+	APIAddr    string `cli:"api-addr"    usage:"API listen address"     default:":8080"`
+	MetricAddr string `cli:"metric-addr" usage:"metrics listen address" default:":9090"`
+}
+
+func (d *DaemonCmd) Validate() error {
+	if d.APIAddr == "" || d.MetricAddr == "" {
+		return fmt.Errorf("both --api-addr and --metric-addr are required")
+	}
 	return nil
 }
 
-// MigrateCmd is in the "admin" group.
+// Run starts multiple services under a single await runner.
+// If any service exits with an error, await cancels the others
+// and waits for them to shut down cleanly.
+func (d *DaemonCmd) Run(ctx context.Context, args []string) error {
+	apiServer := &http.Server{
+		Addr:    d.APIAddr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "api") }),
+	}
+	metricServer := &http.Server{
+		Addr:    d.MetricAddr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "metrics") }),
+	}
+
+	w := await.New(await.WithSignals, await.WithStopTimeout(15*time.Second))
+	w.AddNamed(await.ListenAndServe(apiServer), "api")
+	w.AddNamed(await.ListenAndServe(metricServer), "metrics")
+
+	fmt.Printf("daemon: api=%s metrics=%s\n", d.APIAddr, d.MetricAddr)
+	return w.Run(ctx)
+}
+
+// ---------------------------------------------------------------------------
+// worker: a background job that respects context cancellation
+// ---------------------------------------------------------------------------
+
+type WorkerCmd struct {
+	Interval time.Duration `cli:"interval,i" usage:"poll interval" default:"10s"`
+}
+
+// Run demonstrates a polling worker that exits cleanly on SIGINT/SIGTERM.
+// For a single long-running goroutine, you don't need await — just
+// select on ctx.Done().
+func (w *WorkerCmd) Run(ctx context.Context, args []string) error {
+	fmt.Printf("worker: polling every %s\n", w.Interval)
+	ticker := time.NewTicker(w.Interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Println("worker: shutting down")
+			return nil
+		case <-ticker.C:
+			fmt.Println("worker: tick")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// migrate: a one-shot command (no await needed)
+// ---------------------------------------------------------------------------
+
 type MigrateCmd struct {
 	DryRun bool   `cli:"dry-run" usage:"print migrations without running"`
 	DB     string `cli:"db"      usage:"database name"                    default:"prod"`
@@ -65,56 +160,33 @@ func (m *MigrateCmd) Run(ctx context.Context, args []string) error {
 	return nil
 }
 
-// PingCmd demonstrates positional args.
-type PingCmd struct {
-	Count int `cli:"count,n" usage:"number of pings" default:"3"`
-}
-
-func (p *PingCmd) Run(ctx context.Context, args []string) error {
-	hosts := args
-	if len(hosts) == 0 {
-		hosts = []string{"localhost"}
-	}
-	for _, host := range hosts {
-		for i := 0; i < p.Count; i++ {
-			fmt.Printf("ping #%d -> %s\n", i+1, host)
-		}
-	}
-	return nil
-}
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
 
 func main() {
-	// Middleware: log every command execution
-	loggingMW := func(
-		ctx context.Context,
-		info cli.CommandInfo,
-		next func(context.Context) error,
-	) error {
-		fmt.Printf("[log] running command: %s\n", info.Name)
-		err := next(ctx)
-		if err != nil {
-			fmt.Printf("[log] command failed: %v\n", err)
-		}
-		return err
-	}
-
 	globals := &Globals{}
 	serveCmd := &ServeCmd{}
 
-	app := cli.New("example", "Example CLI demonstrating the cli framework",
+	app := cli.New("example", "Example CLI demonstrating cli + await",
 		cli.WithVersion("1.0.0"),
 		cli.WithGlobals(globals),
 		cli.WithConfigFlag("config"),
-		cli.WithMiddleware(loggingMW),
 	)
 
 	app.AddCommand(
+		// Long-running server with await + graceful shutdown
 		cli.Command("serve", "Start the HTTP server", serveCmd,
 			cli.ConfigAt("database", &serveCmd.DB),
 		),
-		cli.Command("ping", "Ping one or more hosts", &PingCmd{},
-			cli.WithArgs(cli.MinArgs(0)),
-		),
+
+		// Multiple services under one await runner
+		cli.Command("daemon", "Run all services", &DaemonCmd{}),
+
+		// Background worker using context cancellation
+		cli.Command("worker", "Run the background worker", &WorkerCmd{}),
+
+		// One-shot commands don't need await
 		cli.Group("admin", "Administrative commands",
 			cli.Command("migrate", "Run database migrations", &MigrateCmd{},
 				cli.WithArgs(cli.NoArgs),
