@@ -1,6 +1,6 @@
 module github.com/runreveal/lib/cli
 
-go 1.25
+go 1.24
 
 require (
 	github.com/runreveal/lib/loader v0.0.0-20231128193746-50c2ad68891c

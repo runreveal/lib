@@ -1,6 +1,6 @@
 module github.com/runreveal/lib/cli/example
 
-go 1.25
+go 1.24
 
 require github.com/runreveal/lib/cli v0.0.0
 
