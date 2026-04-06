@@ -44,13 +44,15 @@ func (a *App) handleCompletionScript(args []string) int {
 		)
 		return 1
 	}
+	// Completion scripts and __complete output go to stdout, not
+	// a.output (which defaults to stderr). The shell reads stdout.
 	switch args[0] {
 	case "bash":
-		writeBashCompletion(a.output, a.name)
+		writeBashCompletion(a.stdout, a.name)
 	case "zsh":
-		writeZshCompletion(a.output, a.name)
+		writeZshCompletion(a.stdout, a.name)
 	case "fish":
-		writeFishCompletion(a.output, a.name)
+		writeFishCompletion(a.stdout, a.name)
 	default:
 		fmt.Fprintf(
 			a.output,
@@ -66,9 +68,9 @@ func (a *App) handleCompleteRequest(args []string) {
 	completions := a.computeCompletions(context.Background(), args)
 	for _, c := range completions {
 		if c.Description != "" {
-			fmt.Fprintf(a.output, "%s\t%s\n", c.Value, c.Description)
+			fmt.Fprintf(a.stdout, "%s\t%s\n", c.Value, c.Description)
 		} else {
-			fmt.Fprintf(a.output, "%s\n", c.Value)
+			fmt.Fprintf(a.stdout, "%s\n", c.Value)
 		}
 	}
 }

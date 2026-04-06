@@ -173,9 +173,10 @@ func WithDefaultConfigCommand(name string) AppOption {
 	return func(a *App) { a.defaultConfigCmd = name }
 }
 
-// WithOutput sets the writer for help/error output (default: os.Stderr).
+// WithOutput sets the writer for all output: help/errors (normally stderr)
+// and completion/defcon (normally stdout). Useful for testing.
 func WithOutput(w io.Writer) AppOption {
-	return func(a *App) { a.output = w }
+	return func(a *App) { a.output = w; a.stdout = w }
 }
 
 // App is the top-level CLI application.
@@ -189,7 +190,8 @@ type App struct {
 	defaultConfigCmd string
 	middlewares      []Middleware
 	children         []Node
-	output           io.Writer
+	output           io.Writer // stderr: errors, help
+	stdout           io.Writer // stdout: completion, defcon
 }
 
 // New creates a new App.
@@ -198,6 +200,7 @@ func New(name, desc string, opts ...AppOption) *App {
 		name:   name,
 		desc:   desc,
 		output: os.Stderr,
+		stdout: os.Stdout,
 	}
 	for _, opt := range opts {
 		opt(a)
@@ -473,7 +476,7 @@ func (a *App) handleDefaultConfig() int {
 		fmt.Fprintf(a.output, "no default config registered\n")
 		return 1
 	}
-	if _, err := a.output.Write(a.defaultConfig); err != nil {
+	if _, err := a.stdout.Write(a.defaultConfig); err != nil {
 		fmt.Fprintf(a.output, "error writing config: %s\n", err)
 		return 1
 	}
