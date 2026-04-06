@@ -244,11 +244,7 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 	if code, handled := a.handleCompletion(args); handled {
 		return code, nil
 	}
-	defconCmd := a.defaultConfigCmd
-	if defconCmd == "" {
-		defconCmd = "defcon"
-	}
-	if len(args) == 1 && args[0] == defconCmd {
+	if dc := a.defconCmd(); len(args) == 1 && args[0] == dc {
 		return a.handleDefaultConfig(), nil
 	}
 
@@ -262,7 +258,7 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 		return 0, nil
 	}
 	if len(args) == 0 || (len(args) == 1 && (args[0] == "--help" || args[0] == "-h")) {
-		printAppHelp(a.output, a.name, a.desc, a.children, a.version)
+		printAppHelp(a.output, a.name, a.desc, a.children, a.version, a.defconCmd())
 		return 0, nil
 	}
 
@@ -270,7 +266,7 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 	if node == nil {
 		// Unknown command
 		fmt.Fprintf(a.output, "unknown command %q\n\n", args[0])
-		printAppHelp(a.output, a.name, a.desc, a.children, a.version)
+		printAppHelp(a.output, a.name, a.desc, a.children, a.version, a.defconCmd())
 		return 1, nil
 	}
 
@@ -469,6 +465,18 @@ func buildChain(middlewares []Middleware, info CommandInfo, final func(context.C
 		}
 	}
 	return chain
+}
+
+// defconCmd returns the default config command name, or "" if no
+// default config is registered.
+func (a *App) defconCmd() string {
+	if len(a.defaultConfig) == 0 {
+		return ""
+	}
+	if a.defaultConfigCmd != "" {
+		return a.defaultConfigCmd
+	}
+	return "defcon"
 }
 
 func (a *App) handleDefaultConfig() int {

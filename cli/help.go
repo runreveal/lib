@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func printAppHelp(w io.Writer, appName, desc string, children []Node, version string) {
+func printAppHelp(w io.Writer, appName, desc string, children []Node, version, defconCmd string) {
 	if desc != "" {
 		fmt.Fprintf(w, "%s - %s\n\n", appName, desc)
 	} else {
@@ -37,6 +37,9 @@ func printAppHelp(w io.Writer, appName, desc string, children []Node, version st
 
 	if len(children) > 0 {
 		fmt.Fprintf(w, "\nUse \"%s <command> --help\" for more information.\n", appName)
+	}
+	if defconCmd != "" {
+		fmt.Fprintf(w, "Use \"%s %s\" to print the default configuration.\n", appName, defconCmd)
 	}
 }
 

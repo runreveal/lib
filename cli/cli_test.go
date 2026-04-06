@@ -1202,9 +1202,10 @@ func TestDefaultConfig_NotRegistered(t *testing.T) {
 	var buf bytes.Buffer
 	app := cli.New("app", "test", cli.WithOutput(&buf))
 
+	// Without WithDefaultConfig, "defcon" is not a recognized command.
 	code := app.Run(context.Background(), []string{"defcon"})
 	assert.Equal(t, 1, code)
-	assert.Contains(t, buf.String(), "no default config")
+	assert.Contains(t, buf.String(), "unknown command")
 }
 
 func TestExitError(t *testing.T) {
