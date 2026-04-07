@@ -81,6 +81,7 @@ type Node interface {
 type commandNode struct {
 	name     string
 	desc     string
+	long     string
 	handler  Runnable
 	children []Node
 	opts     cmdOptions
@@ -93,6 +94,7 @@ func (c *commandNode) isGroup() bool    { return false }
 type groupNode struct {
 	name     string
 	desc     string
+	long     string
 	children []Node
 }
 
@@ -100,11 +102,12 @@ func (g *groupNode) nodeName() string { return g.name }
 func (g *groupNode) nodeDesc() string { return g.desc }
 func (g *groupNode) isGroup() bool    { return true }
 
-// CmdOption configures a Command node.
+// CmdOption configures a Command or Group node.
 type CmdOption func(*cmdOptions)
 
 type cmdOptions struct {
 	argsFunc ArgsFunc
+	long     string
 }
 
 // WithArgs sets an args validation function on a command.
@@ -112,11 +115,16 @@ func WithArgs(f ArgsFunc) CmdOption {
 	return func(o *cmdOptions) { o.argsFunc = f }
 }
 
-// Command creates a command node. Each element of opts may be a Node (child
-// subcommand) or a CmdOption (behavioural option); they are distinguished by
-// type at runtime.
-func Command(name, desc string, handler Runnable, opts ...any) Node {
-	o := cmdOptions{}
+// WithLong sets long-form help text shown when the command is invoked with
+// --help. The short description is still used in parent command listings.
+func WithLong(text string) CmdOption {
+	return func(o *cmdOptions) { o.long = text }
+}
+
+// parseNodeOpts processes the variadic opts accepted by Command and Group,
+// separating Node children from CmdOption configurers.
+func parseNodeOpts(kind, name string, opts []any) ([]Node, cmdOptions) {
+	var o cmdOptions
 	var children []Node
 	for _, opt := range opts {
 		switch v := opt.(type) {
@@ -125,15 +133,26 @@ func Command(name, desc string, handler Runnable, opts ...any) Node {
 		case CmdOption:
 			v(&o)
 		default:
-			panic(fmt.Sprintf("cli.Command %q: unsupported option type %T", name, v))
+			panic(fmt.Sprintf("cli.%s %q: unsupported option type %T", kind, name, v))
 		}
 	}
-	return &commandNode{name: name, desc: desc, handler: handler, children: children, opts: o}
+	return children, o
+}
+
+// Command creates a command node. Each element of opts may be a Node (child
+// subcommand) or a CmdOption (behavioural option); they are distinguished by
+// type at runtime.
+func Command(name, desc string, handler Runnable, opts ...any) Node {
+	children, o := parseNodeOpts("Command", name, opts)
+	return &commandNode{name: name, desc: desc, long: o.long, handler: handler, children: children, opts: o}
 }
 
 // Group creates a group node that only prints help when invoked directly.
-func Group(name, desc string, children ...Node) Node {
-	return &groupNode{name: name, desc: desc, children: children}
+// Each element of opts may be a Node (child subcommand) or a CmdOption
+// (e.g. WithLong); they are distinguished by type at runtime.
+func Group(name, desc string, opts ...any) Node {
+	children, o := parseNodeOpts("Group", name, opts)
+	return &groupNode{name: name, desc: desc, long: o.long, children: children}
 }
 
 // AppOption configures an App.
@@ -319,7 +338,7 @@ func (a *App) executeNode(ctx context.Context, node Node, args []string, path st
 	switch n := node.(type) {
 	case *groupNode:
 		// Groups print help when invoked directly (no matching subcommand)
-		printGroupHelp(a.output, a.name, path, n.desc, n.children)
+		printGroupHelp(a.output, a.name, path, n.desc, n.long, n.children)
 		return 0, nil
 
 	case *commandNode:
@@ -334,7 +353,7 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 	// Check for --help before doing anything else
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
-			printCommandHelp(a.output, a.name, path, node.desc, handler, node.children, a.globals)
+			printCommandHelp(a.output, a.name, path, node.desc, node.long, handler, node.children, a.globals)
 			return 0, nil
 		}
 		if arg == "--" {
@@ -371,7 +390,7 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 	posArgs, err := fs.Parse(args)
 	if err != nil {
 		fmt.Fprintf(a.output, "error: %s\n\n", err)
-		printCommandHelp(a.output, a.name, path, node.desc, handler, node.children, a.globals)
+		printCommandHelp(a.output, a.name, path, node.desc, node.long, handler, node.children, a.globals)
 		return 1, nil
 	}
 

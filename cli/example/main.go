@@ -245,7 +245,12 @@ func main() {
 	)
 
 	app.AddCommand(
-		cli.Command("serve", "Start the HTTP server", &ServeCmd{}),
+		cli.Command("serve", "Start the HTTP server", &ServeCmd{},
+			cli.WithLong(`Start the HTTP server using the configured sources and cache.
+
+The server address is taken from --addr, falling back to the "server.addr"
+field in the config file. Sources must be configured in the config file.`),
+		),
 		cli.Command("list-sources", "List configured sources", &ListSourcesCmd{},
 			cli.WithArgs(cli.NoArgs),
 		),

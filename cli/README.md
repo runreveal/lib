@@ -132,6 +132,14 @@ app.AddCommand(
     // Command with handler
     cli.Command("serve", "Start the server", &ServeCmd{}),
 
+    // Command with long-form help text shown by --help
+    cli.Command("up", "Launch a forge pod", &UpCmd{},
+        cli.WithLong(`Launch a new forge pod for the given branch.
+
+If the branch doesn't exist, create it first. The pod runs Claude Code
+in headless mode with the given prompt.`),
+    ),
+
     // Command with handler AND subcommands
     cli.Command("admin", "Admin tools", &AdminCmd{},
         cli.Command("migrate", "Run migrations", &MigrateCmd{}),
@@ -139,11 +147,77 @@ app.AddCommand(
 
     // Group (no handler, prints help when invoked directly)
     cli.Group("db", "Database commands",
+        cli.WithLong("Manage database migrations and connections."),
         cli.Command("migrate", "Run migrations", &MigrateCmd{}),
         cli.Command("seed", "Seed data", &SeedCmd{}),
     ),
 )
 ```
+
+The short description is always used in parent command listings. The long text
+appears indented below the title line when the user runs `myapp <command> --help`:
+
+```
+myapp up - Launch a forge pod
+
+  Launch a new forge pod for the given branch.
+
+  If the branch doesn't exist, create it first. The pod runs Claude Code
+  in headless mode with the given prompt.
+
+Usage:
+  myapp up [flags]
+
+Flags:
+  ...
+```
+
+### Command Registry
+
+Allow commands to register themselves from outside the main package, enabling
+build-tag-based inclusion of optional commands:
+
+```go
+// cmd/myapp/debug/debug.go
+//go:build debug
+
+package debug
+
+import (
+    "context"
+    "github.com/runreveal/lib/cli"
+)
+
+type DebugCmd struct{}
+
+func (d *DebugCmd) Run(ctx context.Context, args []string) error { ... }
+
+func init() {
+    cli.Register(cli.Command("debug", "Debug tools", &DebugCmd{}))
+}
+```
+
+```go
+// cmd/myapp/main.go
+package main
+
+import (
+    "github.com/runreveal/lib/cli"
+    _ "myapp/cmd/myapp/debug" // only included with -tags debug
+)
+
+func main() {
+    app := cli.New("myapp", "My app")
+    app.AddCommand(cli.Registered()...) // commands from init() calls
+    app.AddCommand(                      // explicit commands
+        cli.Command("serve", "...", &ServeCmd{}),
+    )
+    os.Exit(app.Run(context.Background(), os.Args[1:]))
+}
+```
+
+`Register` is safe to call from `init()` and accumulates across multiple calls.
+`Registered` returns a copy of the registered nodes.
 
 ### Middleware
 

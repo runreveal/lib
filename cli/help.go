@@ -43,11 +43,26 @@ func printAppHelp(w io.Writer, appName, desc string, children []Node, version, d
 	}
 }
 
-func printGroupHelp(w io.Writer, appName, path, desc string, children []Node) {
+func printLongText(w io.Writer, long string) {
+	for _, line := range strings.Split(long, "\n") {
+		if line == "" {
+			fmt.Fprintln(w)
+		} else {
+			fmt.Fprintf(w, "  %s\n", line)
+		}
+	}
+	fmt.Fprintln(w)
+}
+
+func printGroupHelp(w io.Writer, appName, path, desc, long string, children []Node) {
 	if desc != "" {
 		fmt.Fprintf(w, "%s %s - %s\n\n", appName, path, desc)
 	} else {
 		fmt.Fprintf(w, "%s %s\n\n", appName, path)
+	}
+
+	if long != "" {
+		printLongText(w, long)
 	}
 
 	fmt.Fprintf(w, "Usage:\n")
@@ -67,11 +82,15 @@ func printGroupHelp(w io.Writer, appName, path, desc string, children []Node) {
 	fmt.Fprintf(w, "\nUse \"%s %s <command> --help\" for more information.\n", appName, path)
 }
 
-func printCommandHelp(w io.Writer, appName, path, desc string, handler Runnable, children []Node, globals any) {
+func printCommandHelp(w io.Writer, appName, path, desc, long string, handler Runnable, children []Node, globals any) {
 	if desc != "" {
 		fmt.Fprintf(w, "%s %s - %s\n\n", appName, path, desc)
 	} else {
 		fmt.Fprintf(w, "%s %s\n\n", appName, path)
+	}
+
+	if long != "" {
+		printLongText(w, long)
 	}
 
 	fmt.Fprintf(w, "Usage:\n")
