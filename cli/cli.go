@@ -176,6 +176,19 @@ func WithConfigFlag(flagName string) AppOption {
 // WithGlobals registers a struct pointer whose cli-tagged fields become
 // flags available on every command. The pointer is stored in context and
 // can be retrieved with GlobalsFromContext.
+//
+// Global flags may appear anywhere in the argument list — before, between,
+// or after command and subcommand names. For example, all of these are
+// equivalent:
+//
+//	myapp --profile staging auth login
+//	myapp auth --profile staging login
+//	myapp auth login --profile staging
+//
+// If a handler struct defines a flag with the same name as a global flag,
+// the framework panics with a clear error. Rename one of them to resolve
+// the collision. Two commands on separate branches may independently use
+// the same flag name without conflict.
 func WithGlobals(ptr any) AppOption {
 	return func(a *App) { a.globals = ptr }
 }
@@ -283,15 +296,26 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 		return 0, nil
 	}
 
-	node, rest, path := routeArgsWithPath(a.children, args, "")
+	// Strip recognized global flags for routing so that flags like
+	// --profile before a command name don't break command lookup.
+	routingArgs := args
+	if a.globals != nil {
+		routingArgs = stripGlobalFlags(args, a.globals)
+	}
+
+	node, _, path := routeArgsWithPath(a.children, routingArgs, "")
 	if node == nil {
 		// Unknown command
-		fmt.Fprintf(a.output, "unknown command %q\n\n", args[0])
+		fmt.Fprintf(a.output, "unknown command %q\n\n", routingArgs[0])
 		printAppHelp(a.output, a.name, a.desc, a.children, a.version, a.defconCmd())
 		return 1, nil
 	}
 
-	return a.executeNode(ctx, node, rest, path)
+	// Remove the routed command path segments from the original
+	// (unstripped) args so global flags pass through to executeCommand.
+	execArgs := removeRoutedSegments(args, path)
+
+	return a.executeNode(ctx, node, execArgs, path)
 }
 
 func routeArgsWithPath(children []Node, args []string, prefix string) (Node, []string, string) {
@@ -332,6 +356,106 @@ func routeArgsWithPath(children []Node, args []string, prefix string) (Node, []s
 		}
 	}
 	return nil, args, prefix
+}
+
+// globalFlagInfo describes a known global flag for pre-routing stripping.
+type globalFlagInfo struct {
+	isBool bool
+}
+
+// scanGlobalFlags reflects on the globals struct to build a map of flag names
+// (both long and short forms) to their type info.
+func scanGlobalFlags(globals any) map[string]globalFlagInfo {
+	rv := reflect.ValueOf(globals)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+	if rv.Kind() != reflect.Struct {
+		return nil
+	}
+
+	fields, err := scanFields(rv.Type())
+	if err != nil {
+		return nil
+	}
+
+	m := make(map[string]globalFlagInfo)
+	for _, fi := range fields {
+		if fi.flagLong == "" {
+			continue
+		}
+		ft := fi.fieldType
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		info := globalFlagInfo{isBool: ft.Kind() == reflect.Bool}
+		m["--"+fi.flagLong] = info
+		if fi.flagShort != "" {
+			m["-"+fi.flagShort] = info
+		}
+	}
+	return m
+}
+
+// stripGlobalFlags removes recognized global flags (and their values) from
+// args so that command routing sees only command names and non-global args.
+func stripGlobalFlags(args []string, globals any) []string {
+	gflags := scanGlobalFlags(globals)
+	if len(gflags) == 0 {
+		return args
+	}
+
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+
+		if arg == "--" {
+			out = append(out, args[i:]...)
+			break
+		}
+
+		// Check --flag=value or -f=value
+		if eqIdx := strings.IndexByte(arg, '='); eqIdx > 0 && strings.HasPrefix(arg, "-") {
+			name := arg[:eqIdx]
+			if _, ok := gflags[name]; ok {
+				continue
+			}
+			out = append(out, arg)
+			continue
+		}
+
+		info, ok := gflags[arg]
+		if !ok {
+			out = append(out, arg)
+			continue
+		}
+
+		// It's a known global flag — skip it
+		if info.isBool {
+			continue
+		}
+		// Non-bool: also skip the next arg (the value)
+		if i+1 < len(args) {
+			i++
+		}
+	}
+	return out
+}
+
+// removeRoutedSegments removes the command path segments from the original
+// args, preserving all flags and other arguments.
+func removeRoutedSegments(args []string, path string) []string {
+	segments := strings.Fields(path)
+	out := make([]string, 0, len(args))
+	seg := 0
+	for _, arg := range args {
+		if seg < len(segments) && arg == segments[seg] {
+			seg++
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out
 }
 
 func (a *App) executeNode(ctx context.Context, node Node, args []string, path string) (int, error) {
