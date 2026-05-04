@@ -173,7 +173,9 @@ func TestCompletionScripts(t *testing.T) {
 
 			output := buf.String()
 			require.NotEmpty(t, output)
-			assert.Contains(t, output, "testapp")
+			// The script should reference the actual binary name,
+			// not the app's logical name.
+			assert.NotContains(t, output, "testapp")
 		})
 	}
 }

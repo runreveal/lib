@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -44,15 +46,19 @@ func (a *App) handleCompletionScript(args []string) int {
 		)
 		return 1
 	}
+	// Use the actual binary name so the completion script matches
+	// whatever name the binary was installed as.
+	binName := filepath.Base(os.Args[0])
+
 	// Completion scripts and __complete output go to stdout, not
 	// a.output (which defaults to stderr). The shell reads stdout.
 	switch args[0] {
 	case "bash":
-		writeBashCompletion(a.stdout, a.name)
+		writeBashCompletion(a.stdout, binName)
 	case "zsh":
-		writeZshCompletion(a.stdout, a.name)
+		writeZshCompletion(a.stdout, binName)
 	case "fish":
-		writeFishCompletion(a.stdout, a.name)
+		writeFishCompletion(a.stdout, binName)
 	default:
 		fmt.Fprintf(
 			a.output,
