@@ -190,7 +190,10 @@ func WithConfigFlag(flagName string) AppOption {
 // the collision. Two commands on separate branches may independently use
 // the same flag name without conflict.
 func WithGlobals(ptr any) AppOption {
-	return func(a *App) { a.globals = ptr }
+	return func(a *App) {
+		a.globals = ptr
+		a.globalFlags = scanGlobalFlags(ptr)
+	}
 }
 
 // WithDefaultConfig registers a default configuration that can be printed
@@ -220,6 +223,7 @@ type App struct {
 	version          string
 	configFlag       string
 	globals          any // pointer to globals struct, if set
+	globalFlags      map[string]globalFlagInfo
 	defaultConfig    []byte
 	defaultConfigCmd string
 	middlewares      []Middleware
@@ -296,69 +300,21 @@ func (a *App) run(ctx context.Context, args []string) (int, error) {
 		return 0, nil
 	}
 
-	// Strip recognized global flags for routing so that flags like
-	// --profile before a command name don't break command lookup.
-	routingArgs := args
-	if a.globals != nil {
-		routingArgs = stripGlobalFlags(args, a.globals)
-	}
-
-	node, _, path := routeArgsWithPath(a.children, routingArgs, "")
+	node, rest, path := routeArgsWithPath(a.children, args, "", a.globalFlags)
 	if node == nil {
-		// Unknown command
-		fmt.Fprintf(a.output, "unknown command %q\n\n", routingArgs[0])
+		first := args[0]
+		if i := skipGlobalFlags(args, a.globalFlags); i < len(args) {
+			first = args[i]
+		}
+		fmt.Fprintf(a.output, "unknown command %q\n\n", first)
 		printAppHelp(a.output, a.name, a.desc, a.children, a.version, a.defconCmd())
 		return 1, nil
 	}
 
-	// Remove the routed command path segments from the original
-	// (unstripped) args so global flags pass through to executeCommand.
-	execArgs := removeRoutedSegments(args, path)
-
-	return a.executeNode(ctx, node, execArgs, path)
+	return a.executeNode(ctx, node, rest, path)
 }
 
-func routeArgsWithPath(children []Node, args []string, prefix string) (Node, []string, string) {
-	if len(args) == 0 {
-		return nil, args, prefix
-	}
-
-	name := args[0]
-	// Don't treat flags as command names
-	if strings.HasPrefix(name, "-") {
-		return nil, args, prefix
-	}
-
-	for _, child := range children {
-		if child.nodeName() == name {
-			fullPath := name
-			if prefix != "" {
-				fullPath = prefix + " " + name
-			}
-			rest := args[1:]
-
-			// If this node has children and the next arg matches one, recurse
-			var subChildren []Node
-			switch n := child.(type) {
-			case *commandNode:
-				subChildren = n.children
-			case *groupNode:
-				subChildren = n.children
-			}
-
-			if len(subChildren) > 0 && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
-				if sub, subRest, subPath := routeArgsWithPath(subChildren, rest, fullPath); sub != nil {
-					return sub, subRest, subPath
-				}
-			}
-
-			return child, rest, fullPath
-		}
-	}
-	return nil, args, prefix
-}
-
-// globalFlagInfo describes a known global flag for pre-routing stripping.
+// globalFlagInfo describes a known global flag for routing.
 type globalFlagInfo struct {
 	isBool bool
 }
@@ -397,65 +353,73 @@ func scanGlobalFlags(globals any) map[string]globalFlagInfo {
 	return m
 }
 
-// stripGlobalFlags removes recognized global flags (and their values) from
-// args so that command routing sees only command names and non-global args.
-func stripGlobalFlags(args []string, globals any) []string {
-	gflags := scanGlobalFlags(globals)
-	if len(gflags) == 0 {
-		return args
-	}
-
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
+// skipGlobalFlags returns the index of the first arg that is not a recognized
+// global flag (or its value). Stops at "--".
+func skipGlobalFlags(args []string, gflags map[string]globalFlagInfo) int {
+	i := 0
+	for i < len(args) {
 		arg := args[i]
-
 		if arg == "--" {
-			out = append(out, args[i:]...)
 			break
 		}
-
-		// Check --flag=value or -f=value
 		if eqIdx := strings.IndexByte(arg, '='); eqIdx > 0 && strings.HasPrefix(arg, "-") {
-			name := arg[:eqIdx]
-			if _, ok := gflags[name]; ok {
+			if _, ok := gflags[arg[:eqIdx]]; ok {
+				i++
 				continue
 			}
-			out = append(out, arg)
-			continue
+			break
 		}
-
 		info, ok := gflags[arg]
 		if !ok {
-			out = append(out, arg)
-			continue
+			break
 		}
-
-		// It's a known global flag — skip it
-		if info.isBool {
-			continue
-		}
-		// Non-bool: also skip the next arg (the value)
-		if i+1 < len(args) {
+		i++
+		if !info.isBool && i < len(args) {
 			i++
 		}
 	}
-	return out
+	return i
 }
 
-// removeRoutedSegments removes the command path segments from the original
-// args, preserving all flags and other arguments.
-func removeRoutedSegments(args []string, path string) []string {
-	segments := strings.Fields(path)
-	out := make([]string, 0, len(args))
-	seg := 0
-	for _, arg := range args {
-		if seg < len(segments) && arg == segments[seg] {
-			seg++
-			continue
-		}
-		out = append(out, arg)
+func routeArgsWithPath(children []Node, args []string, prefix string, gflags map[string]globalFlagInfo) (Node, []string, string) {
+	i := skipGlobalFlags(args, gflags)
+	if i >= len(args) {
+		return nil, args, prefix
 	}
-	return out
+
+	name := args[i]
+	if strings.HasPrefix(name, "-") {
+		return nil, args, prefix
+	}
+
+	for _, child := range children {
+		if child.nodeName() == name {
+			fullPath := name
+			if prefix != "" {
+				fullPath = prefix + " " + name
+			}
+			rest := make([]string, 0, len(args)-1)
+			rest = append(rest, args[:i]...)
+			rest = append(rest, args[i+1:]...)
+
+			var subChildren []Node
+			switch n := child.(type) {
+			case *commandNode:
+				subChildren = n.children
+			case *groupNode:
+				subChildren = n.children
+			}
+
+			if len(subChildren) > 0 {
+				if sub, subRest, subPath := routeArgsWithPath(subChildren, rest, fullPath, gflags); sub != nil {
+					return sub, subRest, subPath
+				}
+			}
+
+			return child, rest, fullPath
+		}
+	}
+	return nil, args, prefix
 }
 
 func (a *App) executeNode(ctx context.Context, node Node, args []string, path string) (int, error) {
