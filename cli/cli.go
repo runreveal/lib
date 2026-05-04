@@ -381,7 +381,12 @@ func skipGlobalFlags(args []string, gflags map[string]globalFlagInfo) int {
 	return i
 }
 
-func routeArgsWithPath(children []Node, args []string, prefix string, gflags map[string]globalFlagInfo) (Node, []string, string) {
+func routeArgsWithPath(
+	children []Node,
+	args []string,
+	prefix string,
+	gflags map[string]globalFlagInfo,
+) (Node, []string, string) {
 	i := skipGlobalFlags(args, gflags)
 	if i >= len(args) {
 		return nil, args, prefix
