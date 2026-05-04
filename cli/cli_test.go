@@ -553,6 +553,12 @@ type configHandler struct {
 
 func (c *configHandler) Run(_ context.Context, _ []string) error { return nil }
 
+type dbConfigOnlyCmd struct {
+	DB dbSection `config:"database"`
+}
+
+func (d *dbConfigOnlyCmd) Run(_ context.Context, _ []string) error { return nil }
+
 func TestConfig_BasicLoad(t *testing.T) {
 	handler := &configHandler{}
 	f := writeConfigFile(t, `{
@@ -754,32 +760,24 @@ func TestGlobals_FromContext(t *testing.T) {
 }
 
 func TestGlobals_ConfigFlagOnGlobals(t *testing.T) {
-	type serveWithConfig struct {
-		DB dbSection `config:"database"`
-	}
-	handler := &struct {
-		serveWithConfig
-	}{}
-	handler.serveWithConfig = serveWithConfig{}
+	// Handler has config tags but no --config flag — the flag lives on globals.
+	handler := &dbConfigOnlyCmd{}
 
-	// Use a handler that has config tags but no config flag —
-	// the config flag is on globals.
 	g := &testGlobals{}
 	f := writeConfigFile(t, `{"database": {"host": "global-host", "port": 3306}}`)
 
-	configCmd := &configHandler{DB: dbSection{}}
 	var buf bytes.Buffer
 	app := cli.New("app", "test",
 		cli.WithOutput(&buf),
 		cli.WithGlobals(g),
 		cli.WithConfigFlag("config"),
 	)
-	app.AddCommand(cli.Command("run", "run", configCmd))
+	app.AddCommand(cli.Command("run", "run", handler))
 
 	code := app.Run(context.Background(), []string{"run", "--config", f})
 	assert.Equal(t, 0, code)
-	assert.Equal(t, "global-host", configCmd.DB.Host)
-	assert.Equal(t, 3306, configCmd.DB.Port)
+	assert.Equal(t, "global-host", handler.DB.Host)
+	assert.Equal(t, 3306, handler.DB.Port)
 }
 
 // --- CVR lifecycle on globals ---
@@ -1349,4 +1347,165 @@ func TestFlagParsing_ShortFlagMissingValue(t *testing.T) {
 	code := app.Run(context.Background(), []string{"echo", "-m"})
 	assert.Equal(t, 1, code)
 	assert.Contains(t, buf.String(), "requires a value")
+}
+
+// --- Global flags before/between/after command routing ---
+
+type profileGlobals struct {
+	Profile string `cli:"profile,p" usage:"profile name"`
+	Verbose bool   `cli:"verbose,v" usage:"verbose"`
+}
+
+type authLoginCmd struct {
+	Token   string `cli:"token,t" usage:"auth token"`
+	globals *profileGlobals
+}
+
+func (a *authLoginCmd) Run(ctx context.Context, _ []string) error {
+	a.globals = cli.GlobalsFromContext[profileGlobals](ctx)
+	return nil
+}
+
+func TestGlobals_BeforeCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantProfile string
+		wantVerbose bool
+		wantToken   string
+	}{
+		{
+			name:        "global flag before command",
+			args:        []string{"--profile", "staging", "auth", "login"},
+			wantProfile: "staging",
+		},
+		{
+			name:        "global flag between command and subcommand",
+			args:        []string{"auth", "--profile", "production", "login"},
+			wantProfile: "production",
+		},
+		{
+			name:        "global flag after subcommand",
+			args:        []string{"auth", "login", "--profile", "dev"},
+			wantProfile: "dev",
+		},
+		{
+			name:        "global flag with = syntax before command",
+			args:        []string{"--profile=eu-west", "auth", "login"},
+			wantProfile: "eu-west",
+		},
+		{
+			name:        "short global flag before command",
+			args:        []string{"-p", "us-east", "auth", "login"},
+			wantProfile: "us-east",
+		},
+		{
+			name:        "boolean global flag before command",
+			args:        []string{"--verbose", "auth", "login"},
+			wantVerbose: true,
+		},
+		{
+			name:        "multiple global flags before command",
+			args:        []string{"--profile", "ci", "--verbose", "auth", "login"},
+			wantProfile: "ci",
+			wantVerbose: true,
+		},
+		{
+			name:        "global and command flags mixed",
+			args:        []string{"--profile", "staging", "auth", "login", "--token", "abc"},
+			wantProfile: "staging",
+			wantToken:   "abc",
+		},
+		{
+			name:        "all flags after subcommand",
+			args:        []string{"auth", "login", "--profile", "local", "--token", "abc", "--verbose"},
+			wantProfile: "local",
+			wantToken:   "abc",
+			wantVerbose: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := &profileGlobals{}
+			cmd := &authLoginCmd{}
+			var buf bytes.Buffer
+			app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+			app.AddCommand(cli.Group("auth", "auth commands",
+				cli.Command("login", "log in", cmd),
+			))
+
+			code := app.Run(context.Background(), tt.args)
+			assert.Equal(t, 0, code, "output: %s", buf.String())
+			assert.Equal(t, tt.wantProfile, g.Profile)
+			assert.Equal(t, tt.wantVerbose, g.Verbose)
+			assert.Equal(t, tt.wantToken, cmd.Token)
+		})
+	}
+}
+
+func TestGlobals_DoubleDashStopsStripping(t *testing.T) {
+	var capturedArgs []string
+	handler := &captureArgsCmd{inner: func(args []string) { capturedArgs = args }}
+	g := &profileGlobals{}
+
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(cli.Command("run", "run", handler))
+
+	code := app.Run(context.Background(), []string{"run", "--", "--profile", "staging"})
+	assert.Equal(t, 0, code, "output: %s", buf.String())
+	assert.Equal(t, "", g.Profile)
+	assert.Equal(t, []string{"--profile", "staging"}, capturedArgs)
+}
+
+func TestGlobals_CollisionPanics(t *testing.T) {
+	type collisionGlobals struct {
+		Message string `cli:"message,m" usage:"global message"`
+	}
+
+	g := &collisionGlobals{}
+	cmd := &echoCmd{} // also has --message
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(cli.Command("echo", "echo", cmd))
+
+	// The panic is caught by App.Run's recover — verify it surfaces as exit code 1.
+	code := app.Run(context.Background(), []string{"echo"})
+	assert.Equal(t, 1, code)
+}
+
+func TestGlobals_SameFlagDifferentBranches(t *testing.T) {
+	type branchGlobals struct {
+		Verbose bool `cli:"verbose,v" usage:"verbose"`
+	}
+
+	g := &branchGlobals{}
+	cmd1 := &echoCmd{}
+	cmd2 := &echoCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf), cli.WithGlobals(g))
+	app.AddCommand(
+		cli.Command("auth", "auth", cmd1),
+		cli.Command("api", "api", cmd2),
+	)
+
+	code := app.Run(context.Background(), []string{"auth", "--message", "abc"})
+	assert.Equal(t, 0, code, "output: %s", buf.String())
+	assert.Equal(t, "abc", cmd1.Message)
+
+	code = app.Run(context.Background(), []string{"api", "--message", "xyz"})
+	assert.Equal(t, 0, code, "output: %s", buf.String())
+	assert.Equal(t, "xyz", cmd2.Message)
+}
+
+func TestGlobals_NoGlobalsStillWorks(t *testing.T) {
+	cmd := &echoCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("echo", "echo", cmd))
+
+	code := app.Run(context.Background(), []string{"echo", "--message", "hi"})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "hi", cmd.Message)
 }

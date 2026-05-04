@@ -128,7 +128,9 @@ func buildFlagSet(handler Runnable) (*FlagSet, []fieldInfo, error) {
 }
 
 // addGlobalsToFlagSet scans a globals struct pointer and adds its cli-tagged
-// fields to the given FlagSet. Returns the scanned fields for default application.
+// fields to the given FlagSet. If a handler defines a flag with the same name
+// as a global flag, addGlobalsToFlagSet panics — rename one of them.
+// Returns the scanned fields for default application.
 func addGlobalsToFlagSet(fs *FlagSet, globals any) ([]fieldInfo, error) {
 	rv := reflect.ValueOf(globals)
 	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() != reflect.Struct {
@@ -145,9 +147,8 @@ func addGlobalsToFlagSet(fs *FlagSet, globals any) ([]fieldInfo, error) {
 		if fi.flagLong == "" {
 			continue
 		}
-		// Skip if handler already defines this flag (handler wins).
 		if _, exists := fs.byLong[fi.flagLong]; exists {
-			continue
+			panic(fmt.Sprintf("cli: command flag --%s collides with global flag of the same name", fi.flagLong))
 		}
 
 		fieldVal := fieldByIndex(rv, fi.fieldIndex)

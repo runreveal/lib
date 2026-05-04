@@ -83,6 +83,22 @@ func (s *ServeCmd) Run(ctx context.Context, args []string) error {
 }
 ```
 
+Global flags can appear anywhere in the argument list — before, between, or
+after command names:
+
+```bash
+myapp --verbose serve --addr :9090       # before command
+myapp serve --verbose --addr :9090       # after command (also works)
+myapp admin --verbose migrate            # between command and subcommand
+myapp --config prod.json admin migrate   # before nested subcommand
+```
+
+**Collisions:** If a handler defines a flag with the same name as a global
+flag, the framework panics with a clear error at startup. Rename one of them
+to resolve the collision. Two commands on separate branches may independently
+use the same flag name without conflict — each command builds its own flag
+set at execution time.
+
 ### Configure-Validate-Run Lifecycle
 
 Globals and handlers can implement optional lifecycle interfaces:
