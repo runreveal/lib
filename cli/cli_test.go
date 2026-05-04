@@ -1381,23 +1381,23 @@ func TestGlobals_BeforeCommand(t *testing.T) {
 		},
 		{
 			name:        "global flag between command and subcommand",
-			args:        []string{"auth", "--profile", "staging", "login"},
-			wantProfile: "staging",
+			args:        []string{"auth", "--profile", "production", "login"},
+			wantProfile: "production",
 		},
 		{
 			name:        "global flag after subcommand",
-			args:        []string{"auth", "login", "--profile", "staging"},
-			wantProfile: "staging",
+			args:        []string{"auth", "login", "--profile", "dev"},
+			wantProfile: "dev",
 		},
 		{
 			name:        "global flag with = syntax before command",
-			args:        []string{"--profile=staging", "auth", "login"},
-			wantProfile: "staging",
+			args:        []string{"--profile=eu-west", "auth", "login"},
+			wantProfile: "eu-west",
 		},
 		{
 			name:        "short global flag before command",
-			args:        []string{"-p", "staging", "auth", "login"},
-			wantProfile: "staging",
+			args:        []string{"-p", "us-east", "auth", "login"},
+			wantProfile: "us-east",
 		},
 		{
 			name:        "boolean global flag before command",
@@ -1406,8 +1406,8 @@ func TestGlobals_BeforeCommand(t *testing.T) {
 		},
 		{
 			name:        "multiple global flags before command",
-			args:        []string{"--profile", "staging", "--verbose", "auth", "login"},
-			wantProfile: "staging",
+			args:        []string{"--profile", "ci", "--verbose", "auth", "login"},
+			wantProfile: "ci",
 			wantVerbose: true,
 		},
 		{
@@ -1418,8 +1418,8 @@ func TestGlobals_BeforeCommand(t *testing.T) {
 		},
 		{
 			name:        "all flags after subcommand",
-			args:        []string{"auth", "login", "--profile", "staging", "--token", "abc", "--verbose"},
-			wantProfile: "staging",
+			args:        []string{"auth", "login", "--profile", "local", "--token", "abc", "--verbose"},
+			wantProfile: "local",
 			wantToken:   "abc",
 			wantVerbose: true,
 		},
