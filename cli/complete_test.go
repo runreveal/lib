@@ -230,3 +230,30 @@ func TestCompleteOutputFormat(t *testing.T) {
 		)
 	}
 }
+
+func TestComplete_Aliases(t *testing.T) {
+	newAliasApp := func(buf *bytes.Buffer) *cli.App {
+		app := cli.New("testapp", "A test application", cli.WithOutput(buf))
+		app.AddCommand(cli.Group("pipelines", "pipeline commands",
+			cli.Command("add-step", "add a step", &serveHandler{}, cli.Aliases("addStep")),
+		))
+		return app
+	}
+
+	t.Run("aliases not suggested", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := newAliasApp(&buf)
+		code := app.Run(context.Background(), []string{"__complete", "pipelines", ""})
+		assert.Equal(t, 0, code)
+		assert.Contains(t, buf.String(), "add-step")
+		assert.NotContains(t, buf.String(), "addStep")
+	})
+
+	t.Run("flag completion works through alias", func(t *testing.T) {
+		var buf bytes.Buffer
+		app := newAliasApp(&buf)
+		code := app.Run(context.Background(), []string{"__complete", "pipelines", "addStep", "--"})
+		assert.Equal(t, 0, code)
+		assert.Contains(t, buf.String(), "--addr")
+	})
+}

@@ -43,6 +43,13 @@ func printAppHelp(w io.Writer, appName, desc string, children []Node, version, d
 	}
 }
 
+// printAliases prints an "Aliases:" line when a node has alternate names.
+func printAliases(w io.Writer, aliases []string) {
+	if len(aliases) > 0 {
+		fmt.Fprintf(w, "Aliases: %s\n\n", strings.Join(aliases, ", "))
+	}
+}
+
 func printLongText(w io.Writer, long string) {
 	for _, line := range strings.Split(long, "\n") {
 		if line == "" {
@@ -54,12 +61,14 @@ func printLongText(w io.Writer, long string) {
 	fmt.Fprintln(w)
 }
 
-func printGroupHelp(w io.Writer, appName, path, desc, long string, children []Node) {
+func printGroupHelp(w io.Writer, appName, path, desc, long string, aliases []string, children []Node) {
 	if desc != "" {
 		fmt.Fprintf(w, "%s %s - %s\n\n", appName, path, desc)
 	} else {
 		fmt.Fprintf(w, "%s %s\n\n", appName, path)
 	}
+
+	printAliases(w, aliases)
 
 	if long != "" {
 		printLongText(w, long)
@@ -82,12 +91,16 @@ func printGroupHelp(w io.Writer, appName, path, desc, long string, children []No
 	fmt.Fprintf(w, "\nUse \"%s %s <command> --help\" for more information.\n", appName, path)
 }
 
-func printCommandHelp(w io.Writer, appName, path, desc, long string, handler Runnable, children []Node, globals any) {
+func printCommandHelp(
+	w io.Writer, appName, path, desc, long string, aliases []string, handler Runnable, children []Node, globals any,
+) {
 	if desc != "" {
 		fmt.Fprintf(w, "%s %s - %s\n\n", appName, path, desc)
 	} else {
 		fmt.Fprintf(w, "%s %s\n\n", appName, path)
 	}
+
+	printAliases(w, aliases)
 
 	if long != "" {
 		printLongText(w, long)

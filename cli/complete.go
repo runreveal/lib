@@ -96,7 +96,7 @@ func (a *App) computeCompletions(
 		}
 		found := false
 		for _, child := range children {
-			if child.nodeName() == arg {
+			if nodeMatches(child, arg) {
 				currentNode = child
 				consumed = i + 1
 				switch n := child.(type) {

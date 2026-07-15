@@ -1509,3 +1509,92 @@ func TestGlobals_NoGlobalsStillWorks(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Equal(t, "hi", cmd.Message)
 }
+
+// --- alias tests ---
+
+func TestAliases_CommandRouting(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"canonical name", []string{"parent", "add-step"}},
+		{"alias name", []string{"parent", "addStep"}},
+		{"second alias", []string{"parent", "add_step"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var called bool
+			sub := &captureArgsCmd{inner: func(_ []string) { called = true }}
+			var buf bytes.Buffer
+			app := cli.New("app", "test", cli.WithOutput(&buf))
+			app.AddCommand(cli.Command("parent", "parent", &noopCmd{},
+				cli.Command("add-step", "add a step", sub, cli.Aliases("addStep", "add_step")),
+			))
+
+			code := app.Run(context.Background(), tt.args)
+			assert.Equal(t, 0, code, "output: %s", buf.String())
+			assert.True(t, called)
+		})
+	}
+}
+
+func TestAliases_GroupRouting(t *testing.T) {
+	var called bool
+	sub := &captureArgsCmd{inner: func(_ []string) { called = true }}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Group("managed-enrichments", "enrichments", cli.Aliases("managedenrichments"),
+		cli.Command("list", "list", sub),
+	))
+
+	code := app.Run(context.Background(), []string{"managedenrichments", "list"})
+	assert.Equal(t, 0, code, "output: %s", buf.String())
+	assert.True(t, called)
+}
+
+func TestAliases_HiddenFromParentHelp(t *testing.T) {
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Group("parent", "parent commands",
+		cli.Command("add-step", "add a step", &noopCmd{}, cli.Aliases("addStep")),
+	))
+
+	code := app.Run(context.Background(), []string{"parent"})
+	assert.Equal(t, 0, code)
+	assert.Contains(t, buf.String(), "add-step")
+	assert.NotContains(t, buf.String(), "addStep")
+}
+
+func TestAliases_ShownInCommandHelp(t *testing.T) {
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("add-step", "add a step", &noopCmd{}, cli.Aliases("addStep")))
+
+	code := app.Run(context.Background(), []string{"add-step", "--help"})
+	assert.Equal(t, 0, code)
+	assert.Contains(t, buf.String(), "Aliases: addStep")
+}
+
+func TestAliases_HelpViaAliasShowsCanonicalPath(t *testing.T) {
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Group("parent", "parent commands",
+		cli.Command("add-step", "add a step", &noopCmd{}, cli.Aliases("addStep")),
+	))
+
+	code := app.Run(context.Background(), []string{"parent", "addStep", "--help"})
+	assert.Equal(t, 0, code)
+	assert.Contains(t, buf.String(), "app parent add-step")
+}
+
+func TestAliases_FlagsParseViaAlias(t *testing.T) {
+	cmd := &echoCmd{}
+	var buf bytes.Buffer
+	app := cli.New("app", "test", cli.WithOutput(&buf))
+	app.AddCommand(cli.Command("echo-msg", "echo", cmd, cli.Aliases("echoMsg")))
+
+	code := app.Run(context.Background(), []string{"echoMsg", "--message", "hi"})
+	assert.Equal(t, 0, code, "output: %s", buf.String())
+	assert.Equal(t, "hi", cmd.Message)
+}
