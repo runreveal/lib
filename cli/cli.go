@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"runtime/debug"
+	"slices"
 	"strings"
 )
 
@@ -82,6 +83,7 @@ type commandNode struct {
 	name     string
 	desc     string
 	long     string
+	aliases  []string
 	handler  Runnable
 	children []Node
 	opts     cmdOptions
@@ -95,6 +97,7 @@ type groupNode struct {
 	name     string
 	desc     string
 	long     string
+	aliases  []string
 	children []Node
 }
 
@@ -108,6 +111,7 @@ type CmdOption func(*cmdOptions)
 type cmdOptions struct {
 	argsFunc ArgsFunc
 	long     string
+	aliases  []string
 }
 
 // WithArgs sets an args validation function on a command.
@@ -119,6 +123,14 @@ func WithArgs(f ArgsFunc) CmdOption {
 // --help. The short description is still used in parent command listings.
 func WithLong(text string) CmdOption {
 	return func(o *cmdOptions) { o.long = text }
+}
+
+// Aliases sets alternate names a command or group also answers to.
+// Aliases are matched during routing and completion traversal, but are not
+// listed alongside canonical names in help output or completion suggestions.
+// Useful for keeping old command names working after a rename.
+func Aliases(names ...string) CmdOption {
+	return func(o *cmdOptions) { o.aliases = append(o.aliases, names...) }
 }
 
 // parseNodeOpts processes the variadic opts accepted by Command and Group,
@@ -144,7 +156,7 @@ func parseNodeOpts(kind, name string, opts []any) ([]Node, cmdOptions) {
 // type at runtime.
 func Command(name, desc string, handler Runnable, opts ...any) Node {
 	children, o := parseNodeOpts("Command", name, opts)
-	return &commandNode{name: name, desc: desc, long: o.long, handler: handler, children: children, opts: o}
+	return &commandNode{name: name, desc: desc, long: o.long, aliases: o.aliases, handler: handler, children: children, opts: o}
 }
 
 // Group creates a group node that only prints help when invoked directly.
@@ -152,7 +164,7 @@ func Command(name, desc string, handler Runnable, opts ...any) Node {
 // (e.g. WithLong); they are distinguished by type at runtime.
 func Group(name, desc string, opts ...any) Node {
 	children, o := parseNodeOpts("Group", name, opts)
-	return &groupNode{name: name, desc: desc, long: o.long, children: children}
+	return &groupNode{name: name, desc: desc, long: o.long, aliases: o.aliases, children: children}
 }
 
 // AppOption configures an App.
@@ -398,10 +410,11 @@ func routeArgsWithPath(
 	}
 
 	for _, child := range children {
-		if child.nodeName() == name {
-			fullPath := name
+		if nodeMatches(child, name) {
+			canonical := child.nodeName()
+			fullPath := canonical
 			if prefix != "" {
-				fullPath = prefix + " " + name
+				fullPath = prefix + " " + canonical
 			}
 			rest := make([]string, 0, len(args)-1)
 			rest = append(rest, args[:i]...)
@@ -427,11 +440,26 @@ func routeArgsWithPath(
 	return nil, args, prefix
 }
 
+// nodeMatches reports whether name is the node's canonical name or one of
+// its aliases.
+func nodeMatches(n Node, name string) bool {
+	if n.nodeName() == name {
+		return true
+	}
+	switch v := n.(type) {
+	case *commandNode:
+		return slices.Contains(v.aliases, name)
+	case *groupNode:
+		return slices.Contains(v.aliases, name)
+	}
+	return false
+}
+
 func (a *App) executeNode(ctx context.Context, node Node, args []string, path string) (int, error) {
 	switch n := node.(type) {
 	case *groupNode:
 		// Groups print help when invoked directly (no matching subcommand)
-		printGroupHelp(a.output, a.name, path, n.desc, n.long, n.children)
+		printGroupHelp(a.output, a.name, path, n.desc, n.long, n.aliases, n.children)
 		return 0, nil
 
 	case *commandNode:
@@ -446,7 +474,7 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 	// Check for --help before doing anything else
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
-			printCommandHelp(a.output, a.name, path, node.desc, node.long, handler, node.children, a.globals)
+			printCommandHelp(a.output, a.name, path, node.desc, node.long, node.aliases, handler, node.children, a.globals)
 			return 0, nil
 		}
 		if arg == "--" {
@@ -483,7 +511,7 @@ func (a *App) executeCommand(ctx context.Context, node *commandNode, args []stri
 	posArgs, err := fs.Parse(args)
 	if err != nil {
 		fmt.Fprintf(a.output, "error: %s\n\n", err)
-		printCommandHelp(a.output, a.name, path, node.desc, node.long, handler, node.children, a.globals)
+		printCommandHelp(a.output, a.name, path, node.desc, node.long, node.aliases, handler, node.children, a.globals)
 		return 1, nil
 	}
 
